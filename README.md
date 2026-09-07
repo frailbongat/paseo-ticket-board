@@ -71,6 +71,36 @@ working. That happens on a repository you cannot write to.
 
 A claim costs no extra reads. Assignees already arrive with the issue list.
 
+## Per-project setup and teardown
+
+Every dispatch gets its own worktree, but a worktree is only isolated if the project makes it so.
+Give each repo you dispatch from a `paseo.json` with worktree scripts:
+
+```json
+{
+  "worktree": {
+    "setup": "./.paseo/setup.sh",
+    "teardown": "./.paseo/teardown.sh",
+    "servicePorts": { "range": "3000-3060" }
+  },
+  "scripts": {
+    "dev": { "type": "service", "command": "./.paseo/dev.sh" }
+  }
+}
+```
+
+- **`setup`** runs once in the new worktree, before any script or agent. Write the env file, install
+  dependencies, and stand up a database, cache, or fixture named after the branch. Must be
+  idempotent, because it reruns on a workspace that already exists.
+- **`teardown`** runs on archive, before Paseo removes the directory. Drop the env file, build
+  output, the branch-scoped database, and the branch itself. Every step best-effort, always `exit 0`,
+  so a failure never blocks the archive.
+- **`servicePorts`** hands each workspace its own range, so several dispatched agents can run dev
+  servers and end-to-end tests at the same time.
+
+Without them, agents on the same machine share one port, one database, and one `.env`. Two tickets in
+flight then fail each other's tests, and the agents read that as a bug in their ticket.
+
 ## Contributions
 
 | Contribution                              | Where                    | Mobile |
