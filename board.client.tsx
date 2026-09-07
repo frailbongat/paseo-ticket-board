@@ -1,9 +1,20 @@
 import { type PluginTheme, useRpc, usePaseo } from "@getpaseo/plugin";
-import { useToast } from "@getpaseo/plugin/react-native";
+import { Icon, useToast } from "@getpaseo/plugin/react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Easing, Pressable, ScrollView, Text, View } from "react-native";
 import { dispatchPlans } from "./dispatch.client";
+import {
+  KIND_ICON,
+  MONO,
+  TYPE,
+  clockTime,
+  factColor,
+  factsFor,
+  shortLabel,
+  statePresentation,
+  withAlpha,
+} from "./theme.client";
 import {
   AGENT_PROVIDER,
   AGENT_THINKING,
@@ -13,25 +24,21 @@ import {
   type Ticket,
   type TicketBoard,
   type TicketKind,
-  type TicketState,
-  claimDispatch,
   listTickets,
+  claimDispatch,
   planDispatch,
 } from "./tickets.shared";
-
-const STATE_LABEL: Record<TicketState, string> = {
-  ready: "ready",
-  running: "running",
-  claimed: "claimed",
-  blocked: "blocked",
-};
-
-function stateColor(state: TicketState, theme: PluginTheme): string {
-  if (state === "ready") return theme.colors.statusSuccess;
-  if (state === "running") return theme.colors.statusWarning;
-  if (state === "blocked") return theme.colors.statusDanger;
-  return theme.colors.foregroundMuted;
-}
+import {
+  Button,
+  Callout,
+  Checkbox,
+  Chip,
+  EmptyState,
+  Segment,
+  SegmentTrack,
+  SkeletonRow,
+  StateBadge,
+} from "./ui.client";
 
 /** Ready is always dispatchable. Running and claimed need the force toggle. */
 function canDispatch(ticket: Ticket, force: boolean): boolean {
@@ -40,43 +47,14 @@ function canDispatch(ticket: Ticket, force: boolean): boolean {
   return force;
 }
 
-/** `impeccable:harden` reads as `harden` once the kind chip carries the family. */
-function shortLabel(label: string): string {
-  const colon = label.indexOf(":");
-  return colon === -1 ? label : label.slice(colon + 1);
-}
-
-function Chip({
-  text,
-  theme,
-  color,
-}: {
-  text: string;
-  theme: PluginTheme;
-  color?: string;
-}) {
-  return (
-    <View
-      style={{
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 999,
-        borderWidth: color ? 1 : 0,
-        borderColor: color ?? "transparent",
-        backgroundColor: color ? "transparent" : theme.colors.surface2,
-      }}
-    >
-      <Text style={{ color: color ?? theme.colors.foregroundMuted, fontSize: 11 }}>{text}</Text>
-    </View>
-  );
-}
-
 function TicketRow({
   ticket,
   theme,
   compact,
   selected,
   selectable,
+  pending,
+  force,
   onToggle,
 }: {
   ticket: Ticket;
@@ -84,147 +62,148 @@ function TicketRow({
   compact: boolean;
   selected: boolean;
   selectable: boolean;
+  /** This ticket is part of the dispatch currently in flight. */
+  pending: boolean;
+  force: boolean;
   onToggle: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
+  const fade = useRef(new Animated.Value(1)).current;
+
   const kind = TICKET_KINDS[ticket.kind];
+  const state = statePresentation(ticket.state, theme);
+  const facts = factsFor(ticket, force);
   const labels = ticket.labels.filter((label) => label !== READY_LABEL).map(shortLabel);
 
+  useEffect(() => {
+    Animated.timing(fade, {
+      toValue: pending ? 0.5 : 1,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [fade, pending]);
+
   return (
-    <Pressable
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked: selected, disabled: !selectable }}
-      accessibilityLabel={`${kind.title} ticket ${ticket.number}, ${ticket.title}, ${STATE_LABEL[ticket.state]}`}
-      disabled={!selectable}
-      onPress={onToggle}
-      style={{
-        flexDirection: "row",
-        alignItems: "flex-start",
-        gap: 12,
-        padding: compact ? 12 : 14,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: selected ? theme.colors.accent : theme.colors.border,
-        backgroundColor: theme.colors.surface1,
-        opacity: selectable ? 1 : 0.55,
-      }}
-    >
-      <View
-        style={{
-          width: 18,
-          height: 18,
-          marginTop: 2,
-          borderRadius: 5,
+    <Animated.View style={{ opacity: fade }}>
+      <Pressable
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: selected, disabled: !selectable }}
+        accessibilityLabel={`${kind.title} ticket ${ticket.number}, ${ticket.title}, ${state.label}`}
+        disabled={!selectable}
+        onPress={onToggle}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
+        style={({ pressed }) => ({
+          borderRadius: 12,
           borderWidth: 1,
-          alignItems: "center",
-          justifyContent: "center",
           borderColor: selected ? theme.colors.accent : theme.colors.border,
-          backgroundColor: selected ? theme.colors.accent : "transparent",
-        }}
+          backgroundColor: theme.colors.surface1,
+          opacity: pressed ? 0.9 : 1,
+        })}
       >
-        {selected ? (
-          <Text style={{ color: theme.colors.accentForeground, fontSize: 12, lineHeight: 14 }}>
-            ✓
-          </Text>
-        ) : null}
-      </View>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "flex-start",
+            gap: 12,
+            padding: compact ? 12 : 14,
+            borderRadius: 11,
+            backgroundColor: selected
+              ? withAlpha(theme.colors.accent, 0.1)
+              : hovered && selectable
+                ? withAlpha(theme.colors.foreground, 0.04)
+                : "transparent",
+          }}
+        >
+          {/*
+            An inert row says why it is inert. Dimming the whole card used to
+            carry that, at the cost of every line's contrast.
+          */}
+          <View style={{ width: 18, alignItems: "center", marginTop: 2 }}>
+            {selectable ? (
+              <Checkbox checked={selected} theme={theme} />
+            ) : ticket.state === "blocked" ? (
+              <Icon name="Ban" size={16} color={theme.colors.statusDanger} />
+            ) : (
+              <Icon name="Lock" size={15} color={theme.colors.foregroundMuted} />
+            )}
+          </View>
 
-      <View style={{ flex: 1, gap: 6 }}>
-        <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
-          <Text
-            style={{
-              color: theme.colors.foregroundMuted,
-              fontSize: 13,
-              fontVariant: ["tabular-nums"],
-            }}
-          >
-            #{ticket.number}
-          </Text>
-          <Text style={{ color: theme.colors.foreground, fontSize: 14, flex: 1 }}>
-            {ticket.title}
-          </Text>
+          <View style={{ flex: 1, gap: 6 }}>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+              <Text
+                style={{
+                  color: theme.colors.foregroundMuted,
+                  fontFamily: MONO,
+                  fontSize: TYPE.meta,
+                  fontVariant: ["tabular-nums"],
+                }}
+              >
+                #{ticket.number}
+              </Text>
+              <Text
+                style={{ color: theme.colors.foreground, fontSize: TYPE.row, lineHeight: 20, flex: 1 }}
+              >
+                {ticket.title}
+              </Text>
+            </View>
+
+            <View
+              style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }}
+            >
+              <Chip
+                text={kind.title}
+                icon={KIND_ICON[ticket.kind]}
+                tint={theme.colors.accent}
+                theme={theme}
+              />
+              <StateBadge label={state.label} color={state.color} hollow={state.hollow} />
+              {labels.map((label) => (
+                <Chip key={label} text={label} theme={theme} />
+              ))}
+            </View>
+
+            {ticket.spec ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                <Icon name="CornerDownRight" size={12} color={theme.colors.foregroundMuted} />
+                <Text
+                  numberOfLines={1}
+                  style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.meta, flex: 1 }}
+                >
+                  Under #{ticket.spec.number} {ticket.spec.title}
+                </Text>
+              </View>
+            ) : null}
+
+            {facts.map((fact) => (
+              <Text
+                key={fact.text}
+                style={{ color: factColor(fact.tone, theme), fontSize: TYPE.meta, lineHeight: 17 }}
+              >
+                {fact.text}
+              </Text>
+            ))}
+
+            <Text
+              numberOfLines={1}
+              style={{
+                color: theme.colors.foregroundMuted,
+                fontFamily: MONO,
+                fontSize: TYPE.label,
+                marginTop: 1,
+              }}
+            >
+              /skill:{kind.skill} → {ticket.branch}
+            </Text>
+          </View>
         </View>
-
-        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-          <Chip text={kind.title} theme={theme} color={theme.colors.accent} />
-          <Chip text={STATE_LABEL[ticket.state]} theme={theme} color={stateColor(ticket.state, theme)} />
-          {labels.map((label) => (
-            <Chip key={label} text={label} theme={theme} />
-          ))}
-        </View>
-
-        {ticket.spec ? (
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-            Under #{ticket.spec.number} {ticket.spec.title}
-          </Text>
-        ) : null}
-
-        {ticket.inFlight ? (
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-            {ticket.inFlight}
-          </Text>
-        ) : null}
-
-        {ticket.blockers.length > 0 ? (
-          <Text style={{ color: theme.colors.statusDanger, fontSize: 12 }}>
-            Blocked by {ticket.blockers.join(", ")}
-          </Text>
-        ) : null}
-
-        {ticket.state === "claimed" && ticket.assignees.length > 0 ? (
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-            Assigned to {ticket.assignees.join(", ")}
-          </Text>
-        ) : null}
-
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-          /skill:{kind.skill} → {ticket.branch}
-        </Text>
-      </View>
-    </Pressable>
+      </Pressable>
+    </Animated.View>
   );
 }
 
 type KindFilter = TicketKind | "all";
-
-function FilterPill({
-  text,
-  active,
-  theme,
-  onPress,
-  accessibilityLabel,
-}: {
-  text: string;
-  active: boolean;
-  theme: PluginTheme;
-  onPress: () => void;
-  accessibilityLabel: string;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ selected: active }}
-      accessibilityLabel={accessibilityLabel}
-      onPress={onPress}
-      style={{
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: active ? theme.colors.accent : theme.colors.border,
-        backgroundColor: active ? theme.colors.surface2 : "transparent",
-      }}
-    >
-      <Text
-        style={{
-          color: active ? theme.colors.foreground : theme.colors.foregroundMuted,
-          fontSize: 12,
-        }}
-      >
-        {text}
-      </Text>
-    </Pressable>
-  );
-}
 
 export interface BoardProps {
   theme: PluginTheme;
@@ -252,6 +231,7 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
   const [selected, setSelected] = useState<readonly number[]>([]);
   const [force, setForce] = useState(false);
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
+  const [showSkipped, setShowSkipped] = useState(false);
 
   const board = useQuery({
     queryKey: ["ticket-board", "board", repoDir],
@@ -355,212 +335,290 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
     },
   });
 
+  // Selected, still listed, and held back only by the Force switch. Counting it
+  // keeps the action bar honest about what will actually run.
+  const held = useMemo(
+    () =>
+      selected.filter((number) => {
+        const ticket = tickets.find((entry) => entry.number === number);
+        return ticket !== undefined && ticket.state !== "blocked" && !canDispatch(ticket, force);
+      }).length,
+    [selected, tickets, force],
+  );
+
   const padding = layout.compact ? 16 : 24;
   const busy = dispatch.isPending;
   const readyCount = tickets.filter((ticket) => ticket.state === "ready").length;
 
+  const queryError = board.error
+    ? board.error instanceof Error
+      ? board.error.message
+      : String(board.error)
+    : null;
+
+  // A repository with nothing to show gets a full empty state lower down, so
+  // the headline stays out of its way instead of saying the same thing twice.
+  const showsEmptyState =
+    !hasRepo || (!board.isLoading && tickets.length === 0 && !board.data?.error);
+
+  /** One sentence naming what the reader can do next. */
+  const headline = (() => {
+    if (showsEmptyState) return "Tickets";
+    if (board.isLoading) return "Reading GitHub";
+    if (board.data?.error || queryError) return "Could not read GitHub";
+    if (readyCount === 0) return "Nothing ready to dispatch";
+    return `${readyCount} ready to dispatch`;
+  })();
+
+  const summary = [
+    board.data?.repo,
+    board.data?.baseBranch ? `base ${board.data.baseBranch}` : null,
+    tickets.length > 0 ? `${tickets.length} listed` : null,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(" · ");
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
-      <ScrollView contentContainerStyle={{ padding, gap: layout.compact ? 10 : 12 }}>
+      <ScrollView contentContainerStyle={{ padding, paddingBottom: padding * 1.5, gap: 16 }}>
         <View
           style={{
-            flexDirection: "row",
-            alignItems: "center",
+            flexDirection: layout.compact ? "column" : "row",
+            alignItems: layout.compact ? "stretch" : "flex-end",
             justifyContent: "space-between",
             gap: 12,
-            flexWrap: "wrap",
           }}
         >
-          <View style={{ gap: 2 }}>
-            <Text style={{ color: theme.colors.foreground, fontSize: 16 }}>Tickets</Text>
-            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-              {board.data?.repo ?? "…"}
-              {board.data?.baseBranch ? ` · base ${board.data.baseBranch}` : ""}
-              {` · ${readyCount} ready`}
+          <View style={{ gap: 3, flexShrink: 1 }}>
+            <Text
+              style={{ color: theme.colors.foreground, fontSize: layout.compact ? 18 : 20 }}
+            >
+              {headline}
             </Text>
+            {summary ? (
+              <Text style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.meta }}>
+                {summary}
+              </Text>
+            ) : null}
           </View>
 
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Pressable
-              accessibilityRole="switch"
-              accessibilityState={{ checked: force }}
-              accessibilityLabel="Force: dispatch tickets that already have a worktree"
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+            <Button
+              label="Force"
+              a11yLabel="Force: dispatch tickets that already have a worktree"
+              theme={theme}
+              toggle
+              selected={force}
+              icon="Zap"
+              variant={force ? "warning" : "quiet"}
               onPress={() => setForce((value) => !value)}
-              style={{
-                paddingHorizontal: 12,
-                paddingVertical: 8,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: force ? theme.colors.statusWarning : theme.colors.border,
-                backgroundColor: force ? theme.colors.surface2 : "transparent",
-              }}
-            >
-              <Text
-                style={{
-                  color: force ? theme.colors.statusWarning : theme.colors.foregroundMuted,
-                  fontSize: 13,
-                }}
-              >
-                Force
-              </Text>
-            </Pressable>
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Refresh tickets"
-              disabled={board.isFetching}
+            />
+            <Button
+              label="Refresh tickets"
+              hideLabel
+              icon="RefreshCw"
+              theme={theme}
+              variant="quiet"
+              busy={board.isFetching}
               onPress={() => void board.refetch()}
-              style={{
-                paddingHorizontal: 14,
-                paddingVertical: 8,
-                borderRadius: 10,
-                opacity: board.isFetching ? 0.6 : 1,
-                backgroundColor: theme.colors.accent,
-              }}
-            >
-              <Text style={{ color: theme.colors.accentForeground, fontSize: 13 }}>
-                {board.isFetching ? "Refreshing…" : "Refresh"}
-              </Text>
-            </Pressable>
+            />
           </View>
         </View>
 
         {header}
 
-        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-          <FilterPill
-            text={`All ${tickets.length}`}
-            active={kindFilter === "all"}
-            theme={theme}
-            accessibilityLabel="Show tickets of every kind"
-            onPress={() => setKindFilter("all")}
-          />
-          {KIND_ORDER.map((kind) => {
-            const count = tickets.filter((ticket) => ticket.kind === kind).length;
-            return (
-              <FilterPill
+        {tickets.length > 0 ? (
+          <SegmentTrack theme={theme}>
+            <Segment
+              label="All"
+              count={tickets.length}
+              active={kindFilter === "all"}
+              theme={theme}
+              onPress={() => setKindFilter("all")}
+            />
+            {KIND_ORDER.map((kind) => (
+              <Segment
                 key={kind}
-                text={`${TICKET_KINDS[kind].title} ${count}`}
+                label={TICKET_KINDS[kind].title}
+                icon={KIND_ICON[kind]}
+                count={tickets.filter((ticket) => ticket.kind === kind).length}
                 active={kindFilter === kind}
+                accent={theme.colors.accent}
                 theme={theme}
-                accessibilityLabel={`Show ${TICKET_KINDS[kind].title} tickets only`}
                 onPress={() => setKindFilter(kind)}
               />
-            );
-          })}
-        </View>
-
-        {!hasRepo ? (
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>
-            No git project selected.
-          </Text>
+            ))}
+          </SegmentTrack>
         ) : null}
 
         {board.data?.error ? (
-          <View
-            style={{
-              padding: 14,
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: theme.colors.statusDanger,
-              backgroundColor: theme.colors.surface1,
-            }}
-          >
-            <Text style={{ color: theme.colors.statusDanger, fontSize: 13 }}>
-              {board.data.error}
-            </Text>
-          </View>
+          <Callout
+            theme={theme}
+            tone="danger"
+            title="Could not read this repository."
+            detail={board.data.error}
+          />
         ) : null}
 
-        {board.error ? (
-          <Text style={{ color: theme.colors.statusDanger, fontSize: 13 }}>
-            {board.error instanceof Error ? board.error.message : String(board.error)}
-          </Text>
+        {queryError ? (
+          <Callout theme={theme} tone="danger" title="The board request failed." detail={queryError} />
         ) : null}
 
         {board.isLoading ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <ActivityIndicator color={theme.colors.foregroundMuted} />
-            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>
-              Reading GitHub…
-            </Text>
-          </View>
-        ) : null}
-
-        {visible.map((ticket) => (
-          <TicketRow
-            key={ticket.number}
-            ticket={ticket}
-            theme={theme}
-            compact={layout.compact}
-            selected={selected.includes(ticket.number)}
-            selectable={canDispatch(ticket, force)}
-            onToggle={() => toggle(ticket.number)}
-          />
-        ))}
-
-        {!board.isLoading && visible.length === 0 && !board.data?.error ? (
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>
-            {tickets.length === 0
-              ? "No workable tickets in this repository."
-              : `No ${kindFilter === "all" ? "" : `${kindFilter} `}tickets in this repository.`}
-          </Text>
-        ) : null}
-
-        {board.data && board.data.skipped.length > 0 ? (
-          <View style={{ gap: 4, paddingTop: 8 }}>
-            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-              Skipped {board.data.skipped.length}:
-            </Text>
-            {board.data.skipped.map((line) => (
-              <Text key={line} style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
-                {line}
-              </Text>
+          <View style={{ gap: 10 }}>
+            {[72, 54, 63].map((width) => (
+              <SkeletonRow key={width} theme={theme} width={width} />
             ))}
           </View>
         ) : null}
 
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, paddingTop: 4 }}>
-          {AGENT_PROVIDER} · thinking {AGENT_THINKING}
-          {board.data ? ` · updated ${new Date(board.data.fetchedAt).toLocaleTimeString()}` : ""}
-        </Text>
+        {!hasRepo ? (
+          <EmptyState
+            theme={theme}
+            icon="FolderOpen"
+            title="No git project selected"
+            detail="Open this board inside a git workspace, or pick a project above, and its ready tickets appear here."
+          />
+        ) : null}
+
+        {hasRepo && !board.isLoading && tickets.length === 0 && !board.data?.error ? (
+          <EmptyState
+            theme={theme}
+            icon="Inbox"
+            title="No workable tickets"
+            detail={`Label an open issue \u201c${READY_LABEL}\u201d, or let /wayfinder write one, and it shows up on the next refresh.`}
+            action={{ label: "Refresh", onPress: () => void board.refetch() }}
+          />
+        ) : null}
+
+        {tickets.length > 0 && visible.length === 0 && kindFilter !== "all" ? (
+          <EmptyState
+            theme={theme}
+            icon={KIND_ICON[kindFilter]}
+            title={`No ${TICKET_KINDS[kindFilter].title} tickets`}
+            detail={`${tickets.length} of another kind are waiting behind this filter.`}
+            action={{ label: "Show all", onPress: () => setKindFilter("all") }}
+          />
+        ) : null}
+
+        {visible.length > 0 ? (
+          <View style={{ gap: layout.compact ? 8 : 10 }}>
+            {visible.map((ticket) => (
+              <TicketRow
+                key={ticket.number}
+                ticket={ticket}
+                theme={theme}
+                compact={layout.compact}
+                force={force}
+                selected={selected.includes(ticket.number)}
+                selectable={canDispatch(ticket, force)}
+                pending={busy && dispatchable.includes(ticket.number)}
+                onToggle={() => toggle(ticket.number)}
+              />
+            ))}
+          </View>
+        ) : null}
+
+        {board.data && board.data.skipped.length > 0 ? (
+          <View style={{ gap: 6 }}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: showSkipped }}
+              accessibilityLabel={`${showSkipped ? "Hide" : "Show"} the ${board.data.skipped.length} skipped tickets`}
+              onPress={() => setShowSkipped((value) => !value)}
+              style={({ pressed }) => ({
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 5,
+                alignSelf: "flex-start",
+                minHeight: 30,
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Icon
+                name={showSkipped ? "ChevronDown" : "ChevronRight"}
+                size={13}
+                color={theme.colors.foregroundMuted}
+              />
+              <Text style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.meta }}>
+                Skipped {board.data.skipped.length}
+              </Text>
+            </Pressable>
+
+            {showSkipped
+              ? board.data.skipped.map((line) => (
+                  <Text
+                    key={line}
+                    style={{
+                      color: theme.colors.foregroundMuted,
+                      fontSize: TYPE.label,
+                      lineHeight: 16,
+                      paddingLeft: 18,
+                    }}
+                  >
+                    {line}
+                  </Text>
+                ))
+              : null}
+          </View>
+        ) : null}
+
+        {hasRepo ? (
+          <Text
+            style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.label, lineHeight: 16 }}
+          >
+            {AGENT_PROVIDER} · thinking {AGENT_THINKING}
+            {board.data ? ` · updated ${clockTime(board.data.fetchedAt)}` : ""}
+          </Text>
+        ) : null}
       </ScrollView>
 
       <View
         style={{
           flexDirection: "row",
           alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
+          gap: 10,
           paddingHorizontal: padding,
-          paddingVertical: 12,
+          paddingTop: 12,
+          paddingBottom: layout.compact ? 20 : 12,
           borderTopWidth: 1,
           borderTopColor: theme.colors.border,
           backgroundColor: theme.colors.surface1,
         }}
       >
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, flex: 1 }}>
-          {dispatchable.length === 0
-            ? "Pick one or more tickets"
-            : `${dispatchable.length} selected${force ? " · force" : ""}`}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Dispatch ${dispatchable.length} tickets`}
-          disabled={busy || dispatchable.length === 0}
-          onPress={() => dispatch.mutate()}
-          style={{
-            paddingHorizontal: 16,
-            paddingVertical: 10,
-            borderRadius: 10,
-            opacity: busy || dispatchable.length === 0 ? 0.5 : 1,
-            backgroundColor: theme.colors.accent,
-          }}
+        <Text
+          numberOfLines={2}
+          style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.meta, flex: 1 }}
         >
-          <Text style={{ color: theme.colors.accentForeground, fontSize: 13 }}>
-            {busy ? "Dispatching…" : `Dispatch ${dispatchable.length || ""}`.trim()}
-          </Text>
-        </Pressable>
+          {selected.length === 0 ? "Pick tickets to dispatch" : `${dispatchable.length} selected`}
+          {held > 0 ? (
+            <Text style={{ color: theme.colors.statusWarning }}>
+              {` · ${held} ${held === 1 ? "needs" : "need"} Force`}
+            </Text>
+          ) : null}
+        </Text>
+
+        {selected.length > 0 ? (
+          <Button
+            label="Clear"
+            a11yLabel="Clear selection"
+            theme={theme}
+            variant="ghost"
+            disabled={busy}
+            onPress={() => setSelected([])}
+          />
+        ) : null}
+
+        <Button
+          label={dispatchable.length > 0 ? `Dispatch ${dispatchable.length}` : "Dispatch"}
+          busyLabel="Dispatching"
+          theme={theme}
+          variant="primary"
+          icon="Send"
+          busy={busy}
+          disabled={dispatchable.length === 0}
+          onPress={() => dispatch.mutate()}
+        />
       </View>
     </View>
   );

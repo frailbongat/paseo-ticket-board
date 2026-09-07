@@ -1,8 +1,10 @@
 import { type PluginSurfaceProps, usePaseo } from "@getpaseo/plugin";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { Board } from "./board.client";
+import { TYPE } from "./theme.client";
+import { Segment, SegmentTrack } from "./ui.client";
 
 export const BOARD_SURFACE_ID = "tickets";
 
@@ -40,44 +42,29 @@ export function BoardSurface({ theme, layout, navigation }: PluginSurfaceProps) 
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ gap: 8, paddingVertical: 2 }}
+        contentContainerStyle={{ paddingVertical: 1 }}
       >
-        {list.map((project) => {
-          const selected = project.path === active?.path;
-          return (
-            <Pressable
+        <SegmentTrack theme={theme} wrap={false}>
+          {list.map((project) => (
+            <Segment
               key={project.id}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-              accessibilityLabel={`Show tickets for ${project.name}`}
+              label={project.name}
+              active={project.path === active?.path}
+              theme={theme}
+              accent={theme.colors.accent}
               onPress={() => setChosen(project.path)}
-              style={{
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: selected ? theme.colors.accent : theme.colors.border,
-                backgroundColor: selected ? theme.colors.surface2 : "transparent",
-              }}
-            >
-              <Text
-                style={{
-                  color: selected ? theme.colors.foreground : theme.colors.foregroundMuted,
-                  fontSize: 12,
-                }}
-              >
-                {project.name}
-              </Text>
-            </Pressable>
-          );
-        })}
+            />
+          ))}
+        </SegmentTrack>
       </ScrollView>
     ) : null;
 
   if (projects.isLoading) {
     return (
       <View style={{ flex: 1, padding: 24, backgroundColor: theme.colors.surface0 }}>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>Loading projects…</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.body }}>
+          Loading projects…
+        </Text>
       </View>
     );
   }
