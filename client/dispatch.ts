@@ -1,6 +1,11 @@
 import type { usePaseo } from "@getpaseo/plugin/client";
 import type { BoardSettings } from "../shared/settings";
-import { AGENT_TICKET_LABEL, type DispatchPlan, type TicketCard } from "../shared/tickets";
+import {
+  AGENT_KIND_LABEL,
+  AGENT_TICKET_LABEL,
+  type DispatchPlan,
+  type TicketCard,
+} from "../shared/tickets";
 
 type PaseoApi = ReturnType<typeof usePaseo>;
 
@@ -54,7 +59,7 @@ export async function dispatchPlan(
       title: plan.agentTitle,
       prompt: plan.prompt,
       // Two labels, so a ticket's runs stay findable by number and by skill.
-      labels: { [AGENT_TICKET_LABEL]: String(plan.number), kind: plan.kind },
+      labels: { [AGENT_TICKET_LABEL]: String(plan.number), [AGENT_KIND_LABEL]: plan.kind },
     });
 
     return {

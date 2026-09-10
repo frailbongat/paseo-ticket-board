@@ -747,6 +747,17 @@ function cachedBoard(root: string, vocabulary: LabelVocabulary): TicketBoard | n
   return hit.board;
 }
 
+/**
+ * Drops every cached board for a checkout, whatever vocabulary it was drawn
+ * with. Keys carry the vocabulary, so deleting by root alone never matched and
+ * a board drawn seconds ago outlived the claim it was reporting.
+ */
+function invalidateBoard(root: string): void {
+  for (const key of boardCache.keys()) {
+    if (key.slice(0, key.indexOf("\n")) === root) boardCache.delete(key);
+  }
+}
+
 function toMessage(error: unknown): string {
   if (error instanceof BoardError) return error.message;
   if (error instanceof Error) return error.message;
@@ -1109,8 +1120,9 @@ async function releaseClaim(
     return;
   }
 
-  // A board drawn seconds ago still calls this ticket claimed.
-  boardCache.delete(root);
+  // A board drawn seconds ago still calls this ticket claimed. Keys carry the
+  // vocabulary they were drawn with, so this cannot be a delete by root.
+  invalidateBoard(root);
   console.log(`[tickets] released #${number} on ${repo}: ${why}`);
 }
 
@@ -1123,6 +1135,22 @@ async function releaseAll(
   const root = await resolveRepoRoot(projectRoot);
   const repo = await resolveRepo(root);
   for (const number of numbers) await releaseClaim(root, repo, number, why);
+}
+
+/**
+ * `owner/name` and the issue URL behind any path inside the checkout.
+ *
+ * Two local `git` reads on the usual path, so the composer pill can resolve a
+ * URL on first press rather than holding one it never uses. `resolveRepoRoot`
+ * walks a worktree up to its main checkout, which is what the agent's `cwd` is.
+ */
+export async function resolveTicketHandler(input: {
+  repoDir: string;
+  number: number;
+}): Promise<{ repo: string; url: string }> {
+  const root = await resolveRepoRoot(input.repoDir);
+  const repo = await resolveRepo(root);
+  return { repo, url: `https://github.com/${repo}/issues/${input.number}` };
 }
 
 /**
