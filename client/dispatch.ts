@@ -1,5 +1,5 @@
-import type { usePaseo } from "@getpaseo/plugin";
-import { AGENT_PROVIDER, AGENT_THINKING, type DispatchPlan } from "./tickets.shared";
+import type { usePaseo } from "@getpaseo/plugin/client";
+import { AGENT_PROVIDER, AGENT_THINKING, type DispatchPlan } from "../shared/tickets";
 
 type PaseoApi = ReturnType<typeof usePaseo>;
 

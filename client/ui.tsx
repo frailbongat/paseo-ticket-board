@@ -1,8 +1,8 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import { Icon } from "@getpaseo/plugin/react-native";
+import { Icon } from "@getpaseo/plugin/client/react-native";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Animated, Easing, Pressable, Text, View, type ViewStyle } from "react-native";
-import { TYPE, withAlpha } from "./theme.client";
+import { TYPE, withAlpha } from "./theme";
 
 /**
  * One control vocabulary for the board, matching `paseo-worktree-janitor` so a

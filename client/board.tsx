@@ -1,9 +1,10 @@
-import { type PluginTheme, useRpc, usePaseo } from "@getpaseo/plugin";
-import { Icon, useToast } from "@getpaseo/plugin/react-native";
+import type { PluginTheme } from "@getpaseo/plugin";
+import { useRpc, usePaseo } from "@getpaseo/plugin/client";
+import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, Pressable, ScrollView, Text, View } from "react-native";
-import { dispatchPlans } from "./dispatch.client";
+import { dispatchPlans } from "./dispatch";
 import {
   KIND_ICON,
   MONO,
@@ -14,7 +15,7 @@ import {
   shortLabel,
   statePresentation,
   withAlpha,
-} from "./theme.client";
+} from "./theme";
 import {
   AGENT_PROVIDER,
   AGENT_THINKING,
@@ -27,7 +28,7 @@ import {
   listTickets,
   claimDispatch,
   planDispatch,
-} from "./tickets.shared";
+} from "../shared/tickets";
 import {
   Button,
   Callout,
@@ -38,7 +39,7 @@ import {
   SegmentTrack,
   SkeletonRow,
   StateBadge,
-} from "./ui.client";
+} from "./ui";
 
 /** Ready is always dispatchable. Running and claimed need the force toggle. */
 function canDispatch(ticket: Ticket, force: boolean): boolean {

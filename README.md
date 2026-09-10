@@ -120,13 +120,16 @@ shortcut alone.
 
 | File                       | Runtime | Holds                                                              |
 | -------------------------- | ------- | ------------------------------------------------------------------ |
-| `index.ts`                 | both    | Contribution wiring                                                |
-| `tickets.shared.ts`        | both    | Zod RPC contracts, label vocabulary, kind detection, prompts, the claim marker |
-| `tickets.server.ts`        | daemon  | Every `gh` and `git` call, the ready rules, the claim, the board cache |
-| `board.client.tsx`         | client  | The board: list, kind filter, multi-select, force, refresh, dispatch |
-| `board-panel.client.tsx`   | client  | Workspace-panel wrapper, repo from `projectRootPath`                |
-| `board-surface.client.tsx` | client  | Sidebar wrapper, repo from the host's git projects                  |
-| `dispatch.client.ts`       | client  | Workspace and agent creation through the Paseo SDK                  |
+| `index.client.tsx`         | client  | Surface, sidebar item, panel, and Command Center wiring            |
+| `index.server.ts`          | daemon  | RPC handler wiring                                                 |
+| `shared/tickets.ts`        | both    | Zod RPC contracts, label vocabulary, kind detection, prompts, the claim marker |
+| `server/tickets.ts`        | daemon  | Every `gh` and `git` call, the ready rules, the claim, the board cache |
+| `client/board.tsx`         | client  | The board: list, kind filter, multi-select, force, refresh, dispatch |
+| `client/board-panel.tsx`   | client  | Workspace-panel wrapper, repo from `projectRootPath`                |
+| `client/board-surface.tsx` | client  | Sidebar wrapper, repo from the host's git projects                  |
+| `client/dispatch.ts`       | client  | Workspace and agent creation through the Paseo SDK                  |
+| `client/theme.ts`          | client  | Type scale, ticket color mapping, alpha helper                     |
+| `client/ui.tsx`            | client  | Shared presentational pieces: segments, chips, buttons             |
 
 No `gh` call and no credential handling exists in the client bundle. The panel only ever sends a
 repository path and a list of issue numbers.

@@ -1,3 +1,4 @@
 {
-  "id": "paseo-ticket-board"
+  "id": "paseo-ticket-board",
+  "requirements": { "paseo": ">=0.8.0" }
 }

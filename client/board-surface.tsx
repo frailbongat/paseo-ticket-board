@@ -1,10 +1,10 @@
-import { type PluginSurfaceProps, usePaseo } from "@getpaseo/plugin";
+import { type PluginSurfaceProps, usePaseo } from "@getpaseo/plugin/client";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { Board } from "./board.client";
-import { TYPE } from "./theme.client";
-import { Segment, SegmentTrack } from "./ui.client";
+import { Board } from "./board";
+import { TYPE } from "./theme";
+import { Segment, SegmentTrack } from "./ui";
 
 export const BOARD_SURFACE_ID = "tickets";
 

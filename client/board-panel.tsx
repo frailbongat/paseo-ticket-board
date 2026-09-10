@@ -1,5 +1,5 @@
-import { type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin";
-import { Board } from "./board.client";
+import { type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin/client";
+import { Board } from "./board";
 
 export const BOARD_PANEL_ID = "tickets";
 

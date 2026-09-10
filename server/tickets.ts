@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { PluginHandlerContext } from "@getpaseo/plugin";
+import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import {
   DEFERRED_LABEL,
   type DispatchPlan,
@@ -20,7 +20,7 @@ import {
   isTakeable,
   ownKind,
   ticketPrompt,
-} from "./tickets.shared";
+} from "../shared/tickets";
 
 /**
  * Daemon side of the ticket board: every `gh` call, every `git` call, and the

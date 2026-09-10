@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Platform } from "react-native";
-import { type Ticket, type TicketKind, type TicketState } from "./tickets.shared";
+import { type Ticket, type TicketKind, type TicketState } from "../shared/tickets";
 
 /**
  * The presentation layer, kept in step with `paseo-worktree-janitor` so the two
