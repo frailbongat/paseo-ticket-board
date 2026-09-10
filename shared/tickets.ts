@@ -197,6 +197,46 @@ export const TicketBoardSchema = z.object({
 
 export type TicketBoard = z.infer<typeof TicketBoardSchema>;
 
+// --- the dispatch card --------------------------------------------------------
+
+/**
+ * A dispatched agent opens on its expanded skill body: several hundred lines of
+ * SKILL.md with the ticket URL buried at the end of it. The card is the row
+ * pinned above that, so the tab says which ticket it is without scrolling.
+ *
+ * The daemon appends it; the client renders it. Both halves agree through the
+ * kind and version below.
+ */
+export const TICKET_CARD_KIND = "ticket-card";
+
+export const TICKET_CARD_VERSION = 1;
+
+/**
+ * Plugin-local row identity. Fixed rather than per-ticket, because an agent
+ * runs exactly one ticket: re-appending replaces the card instead of stacking
+ * a second one.
+ */
+export const TICKET_CARD_ID = "ticket";
+
+export const TicketCardSchema = z.object({
+  number: z.number(),
+  title: z.string(),
+  url: z.string(),
+  kind: TicketKindSchema,
+  /** Worktree this agent is running in. The card's answer to "where am I?". */
+  branch: z.string(),
+  /** The spec that owns this ticket, or null when it stands alone. */
+  spec: SpecRefSchema.nullable(),
+  /**
+   * Open blockers as `#12 title`. Empty for every ticket the planner lets
+   * through today, since it refuses a blocked one outright. Carried anyway so
+   * the card reports the ticket rather than the gate.
+   */
+  blockers: z.array(z.string()),
+});
+
+export type TicketCard = z.infer<typeof TicketCardSchema>;
+
 export const DispatchPlanSchema = z.object({
   number: z.number(),
   title: z.string(),
@@ -212,6 +252,8 @@ export const DispatchPlanSchema = z.object({
   agentTitle: z.string(),
   /** Literal prompt handed to the agent. */
   prompt: z.string(),
+  /** Pinned to the agent's timeline once the dispatch comes up. */
+  card: TicketCardSchema,
 });
 
 export type DispatchPlan = z.infer<typeof DispatchPlanSchema>;
@@ -245,6 +287,23 @@ export const claimDispatch = defineRpc({
   output: z.object({
     results: z.array(z.object({ number: z.number(), error: z.string().nullable() })),
   }),
+});
+
+/**
+ * Pins a dispatched ticket to the top of its new agent's timeline.
+ *
+ * Separate from dispatch itself, and daemon-side, because only a plugin session
+ * may append a timeline row: the daemon stamps `pluginId` from the caller and
+ * rejects everyone else. The output carries its own error rather than throwing,
+ * so a missing card never takes down a dispatch that otherwise worked.
+ */
+export const appendTicketCard = defineRpc({
+  name: "ticket-board.timeline.card",
+  input: z.object({
+    agentId: z.string(),
+    card: TicketCardSchema,
+  }),
+  output: z.object({ error: z.string().nullable() }),
 });
 
 export const planDispatch = defineRpc({

@@ -24,6 +24,7 @@ import {
   type Ticket,
   type TicketBoard,
   type TicketKind,
+  appendTicketCard,
   listTickets,
   claimDispatch,
   planDispatch,
@@ -232,6 +233,7 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
   const read = useRpc(listTickets);
   const plan = useRpc(planDispatch);
   const claim = useRpc(claimDispatch);
+  const appendCard = useRpc(appendTicketCard);
 
   const [selected, setSelected] = useState<readonly number[]>([]);
   const [force, setForce] = useState(false);
@@ -291,7 +293,7 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
       });
       if (planned.error !== null) throw new Error(planned.error);
 
-      const results = await dispatchPlans(paseo, planned.plans, settings);
+      const results = await dispatchPlans(paseo, planned.plans, settings, appendCard);
       const started = results.filter((result) => result.error === null);
 
       // Claim only what actually came up. A dispatch that failed has to leave
@@ -312,16 +314,19 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
       const failed = results.filter((result) => result.error !== null);
       const ok = results.filter((result) => result.error === null);
       const unclaimed = claimed.filter((entry) => entry.error !== null);
+      const cardless = ok.filter((result) => result.cardError !== null);
 
       if (failed.length > 0) {
         toast.error(`#${failed[0]?.number} failed: ${failed[0]?.error ?? "unknown error"}`);
-      } else if (unclaimed.length > 0) {
-        // The agents are running. Only GitHub is out of date, and the next
-        // machine to draw the board will not know these tickets are taken.
-        toast.show(
-          `Dispatched ${ok.length}, not claimed on GitHub: ${unclaimed[0]?.error ?? "unknown error"}`,
-          { variant: "warning" },
-        );
+      } else if (unclaimed.length > 0 || cardless.length > 0) {
+        // The agents are running either way. One of the two things hung off a
+        // dispatch did not land: the GitHub claim, so the next machine reads
+        // these tickets as free, or the timeline card, which is cosmetic.
+        const aside =
+          unclaimed.length > 0
+            ? `not claimed on GitHub: ${unclaimed[0]?.error ?? "unknown error"}`
+            : `no ticket card: ${cardless[0]?.cardError ?? "unknown error"}`;
+        toast.show(`Dispatched ${ok.length}, ${aside}`, { variant: "warning" });
       } else {
         toast.show(
           ok.length === 1

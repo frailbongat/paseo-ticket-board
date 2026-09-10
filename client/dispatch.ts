@@ -1,8 +1,17 @@
 import type { usePaseo } from "@getpaseo/plugin/client";
 import type { BoardSettings } from "../shared/settings";
-import { AGENT_TICKET_LABEL, type DispatchPlan } from "../shared/tickets";
+import { AGENT_TICKET_LABEL, type DispatchPlan, type TicketCard } from "../shared/tickets";
 
 type PaseoApi = ReturnType<typeof usePaseo>;
+
+/**
+ * `useRpc(appendTicketCard)`, passed in rather than called here so this module
+ * stays a plain function the board drives.
+ */
+export type AppendTicketCard = (input: {
+  agentId: string;
+  card: TicketCard;
+}) => Promise<{ error: string | null }>;
 
 export interface DispatchResult {
   number: number;
@@ -10,6 +19,8 @@ export interface DispatchResult {
   workspaceId: string | null;
   agentId: string | null;
   error: string | null;
+  /** Why the timeline card is missing. Null when it landed, or was never tried. */
+  cardError: string | null;
 }
 
 /**
@@ -21,6 +32,7 @@ export async function dispatchPlan(
   paseo: PaseoApi,
   plan: DispatchPlan,
   settings: BoardSettings,
+  appendCard: AppendTicketCard,
 ): Promise<DispatchResult> {
   try {
     const workspace = await paseo.workspaces.create({
@@ -51,6 +63,9 @@ export async function dispatchPlan(
       workspaceId: workspace.id,
       agentId: agent.id,
       error: null,
+      // Immediately, so the card is the timeline's first row rather than
+      // something that appears once the skill body has finished streaming.
+      cardError: await appendTicketCard(appendCard, agent.id, plan),
     };
   } catch (caught) {
     return {
@@ -59,7 +74,25 @@ export async function dispatchPlan(
       workspaceId: null,
       agentId: null,
       error: caught instanceof Error ? caught.message : String(caught),
+      cardError: null,
     };
+  }
+}
+
+/**
+ * The agent is already running by the time this fires, so nothing it does may
+ * throw. A dispatch that worked stays a dispatch that worked; the board reports
+ * the missing card as an aside.
+ */
+async function appendTicketCard(
+  appendCard: AppendTicketCard,
+  agentId: string,
+  plan: DispatchPlan,
+): Promise<string | null> {
+  try {
+    return (await appendCard({ agentId, card: plan.card })).error;
+  } catch (caught) {
+    return caught instanceof Error ? caught.message : String(caught);
   }
 }
 
@@ -76,6 +109,7 @@ export async function dispatchPlans(
   paseo: PaseoApi,
   plans: readonly DispatchPlan[],
   settings: BoardSettings,
+  appendCard: AppendTicketCard,
 ): Promise<DispatchResult[]> {
   const results = new Array<DispatchResult>(plans.length);
   let next = 0;
@@ -83,7 +117,12 @@ export async function dispatchPlans(
   async function pump(): Promise<void> {
     while (next < plans.length) {
       const index = next++;
-      results[index] = await dispatchPlan(paseo, plans[index] as DispatchPlan, settings);
+      results[index] = await dispatchPlan(
+        paseo,
+        plans[index] as DispatchPlan,
+        settings,
+        appendCard,
+      );
     }
   }
 

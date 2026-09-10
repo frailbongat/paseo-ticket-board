@@ -17,8 +17,12 @@ import {
   IMPECCABLE_SPEC_LABEL,
   KIND_ORDER,
   type SpecRef,
+  TICKET_CARD_ID,
+  TICKET_CARD_KIND,
+  TICKET_CARD_VERSION,
   type Ticket,
   type TicketBoard,
+  type TicketCard,
   type TicketKind,
   type TicketState,
   WAYFINDER_MAP_LABEL,
@@ -866,6 +870,15 @@ export async function planDispatchHandler(
         cwd: board.repoDir as string,
         agentTitle: branch === base ? ticket.title : `${ticket.title} (${branch.split("-").pop()})`,
         prompt: ticketPrompt(ticket.kind, ticket.url, ticket.spec?.url ?? null),
+        card: {
+          number,
+          title: ticket.title,
+          url: ticket.url,
+          kind: ticket.kind,
+          branch,
+          spec: ticket.spec,
+          blockers: ticket.blockers,
+        },
       });
     }
 
@@ -878,6 +891,34 @@ export async function planDispatchHandler(
     const error = toMessage(caught);
     console.error(`[tickets] plan failed: ${error}`);
     return { plans: [], error };
+  }
+}
+
+/**
+ * Pins the ticket to the new agent's timeline. Called once per dispatch that
+ * actually came up, from the client, immediately after the agent exists.
+ *
+ * Every failure is reported rather than thrown. The agent is already running by
+ * the time this fires, and losing the card is not worth failing the dispatch
+ * the board just reported as green.
+ */
+export async function appendTicketCardHandler(
+  input: { agentId: string; card: TicketCard },
+  context: PluginHandlerContext,
+): Promise<{ error: string | null }> {
+  try {
+    await context.paseo.agents.ref(input.agentId).timeline.append({
+      type: "plugin",
+      id: TICKET_CARD_ID,
+      kind: TICKET_CARD_KIND,
+      version: TICKET_CARD_VERSION,
+      data: input.card,
+    });
+    return { error: null };
+  } catch (caught) {
+    const error = toMessage(caught);
+    console.error(`[tickets] card for #${input.card.number} failed: ${error}`);
+    return { error };
   }
 }
 

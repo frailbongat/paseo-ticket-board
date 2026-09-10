@@ -78,6 +78,24 @@ workspace archived without merging puts its ticket back on the board as `ready`.
 is the backstop for a worktree removed by hand under a workspace that still exists. A ticket that is
 closed, assigned to somebody else, or still sitting in a live worktree is left alone.
 
+## The dispatch card
+
+A dispatched agent opens on its expanded skill. pi pastes the whole `SKILL.md` body inline before the
+agent sees it, so the tab's first screen is several hundred lines of instructions with the ticket URL
+at the very end of them. Nothing said which ticket the tab was for.
+
+So the dispatch pins one row above that: number, title, kind, branch, a link to the issue, and a link
+to the spec it was expanded out of. Blockers get a red block, though the planner refuses a blocked
+ticket outright, so that row only appears if that gate ever loosens.
+
+The daemon writes the row, because only a plugin session may append to a timeline; Paseo stamps the
+plugin id from the caller and rejects anyone else. The client draws it from a registered renderer, so
+a client without the plugin running sees a placeholder rather than a broken row. The row id is fixed
+per agent, so a re-dispatch replaces the card instead of stacking a second one.
+
+The card is appended after the agent exists and never fails a dispatch. A card that does not land is
+an aside on the success toast, the same way a failed claim is.
+
 ## Per-project setup and teardown
 
 Every dispatch gets its own worktree, but a worktree is only isolated if the project makes it so.
@@ -117,10 +135,12 @@ flight then fail each other's tests, and the agents read that as a bug in their 
 | Command Center item **Dispatch ticket**   | ⌘K in any workspace      | No     |
 | Command Center item **Ticket board settings** | ⌘K anywhere          | No     |
 | Settings screen **Ticket board**          | Settings → Plugins       | Yes    |
+| Timeline renderer `ticket-card`           | Dispatched agent's timeline | Yes |
 | Settings document `board`                 | Daemon subprocess        | –      |
 | RPC `ticket-board.tickets.list`           | Daemon subprocess        | –      |
 | RPC `ticket-board.dispatch.plan`          | Daemon subprocess        | –      |
 | RPC `ticket-board.dispatch.claim`         | Daemon subprocess        | –      |
+| RPC `ticket-board.timeline.card`          | Daemon subprocess        | –      |
 | Hook `workspace.archived`                 | Daemon subprocess        | –      |
 | Hook `agent.turn_ended`                   | Daemon subprocess        | –      |
 
@@ -135,12 +155,14 @@ shortcut alone.
 | `index.client.tsx`         | client  | Surface, sidebar item, panel, and Command Center wiring            |
 | `index.server.ts`          | daemon  | RPC handler and lifecycle hook wiring                              |
 | `shared/settings.ts`       | both    | Settings document, its defaults, and the label vocabulary sent to the daemon |
-| `shared/tickets.ts`        | both    | Zod RPC contracts, fixed labels, kind detection, prompts, the claim marker |
+| `shared/tickets.ts`        | both    | Zod RPC contracts, fixed labels, kind detection, prompts, the claim marker, the card contract |
 | `server/tickets.ts`        | daemon  | Every `gh` and `git` call, the ready rules, the claim and its release, the board cache |
 | `client/board.tsx`         | client  | The board: list, kind filter, multi-select, force, refresh, dispatch |
 | `client/board-panel.tsx`   | client  | Workspace-panel wrapper, repo from `projectRootPath`                |
 | `client/board-surface.tsx` | client  | Sidebar wrapper, repo from the host's git projects                  |
 | `client/dispatch.ts`       | client  | Workspace and agent creation through the Paseo SDK                  |
+| `client/ticket-card.tsx`   | client  | The card pinned to a dispatched agent's timeline                    |
+| `client/web.ts`            | client  | The one module allowed a browser global, for opening a link         |
 | `client/settings.ts`       | client  | Reads the settings document, falling back to the defaults           |
 | `client/providers.ts`      | client  | Provider, model, and thinking dropdown options from the daemon      |
 | `client/settings-screen.tsx` | client | The settings screen: one draft, saved as a whole document          |

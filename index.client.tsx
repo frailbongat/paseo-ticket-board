@@ -2,6 +2,12 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { BOARD_PANEL_ID, BoardPanel } from "./client/board-panel";
 import { BOARD_SURFACE_ID, BoardSurface } from "./client/board-surface";
 import { BOARD_SETTINGS_SCREEN_ID, BoardSettingsScreen } from "./client/settings-screen";
+import { TicketCard } from "./client/ticket-card";
+import {
+  TICKET_CARD_KIND,
+  TICKET_CARD_VERSION,
+  TicketCardSchema,
+} from "./shared/tickets";
 
 export default function contribute(client: PluginClientContext) {
   // The sidebar item is the only one of these three a phone can reach.
@@ -27,6 +33,15 @@ export default function contribute(client: PluginClientContext) {
     title: "Ticket board",
     icon: "SlidersHorizontal",
     Component: BoardSettingsScreen,
+  });
+
+  // Draws the row the daemon pins to a dispatched agent's timeline. Without it
+  // that row reads "Plugin timeline item unavailable".
+  client.addTimelineRenderer({
+    kind: TICKET_CARD_KIND,
+    version: TICKET_CARD_VERSION,
+    schema: TicketCardSchema,
+    Component: TicketCard,
   });
 
   client.addCommandCenterItem({
