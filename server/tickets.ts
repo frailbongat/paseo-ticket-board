@@ -1,9 +1,14 @@
 import { execFile } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import type {
+  PluginHandlerContext,
+  PluginHookContext,
+  PluginLifecycleEvents,
+} from "@getpaseo/plugin/server";
 import {
+  AGENT_TICKET_LABEL,
   DEFERRED_LABEL,
   type DispatchPlan,
   IMPECCABLE_SPEC_LABEL,
@@ -851,5 +856,271 @@ export async function planDispatchHandler(
     const error = toMessage(caught);
     console.error(`[tickets] plan failed: ${error}`);
     return { plans: [], error };
+  }
+}
+
+// --- releasing a claim --------------------------------------------------------
+
+/**
+ * The claim is only true while the work is in flight. `claimTicket` assigns the
+ * issue once a workspace comes up and nothing ever gave it back, so a workspace
+ * archived without merging left its ticket reading `claimed` until someone
+ * forced it.
+ *
+ * Both hooks below ask the same question: the worktree this ticket was
+ * dispatched into is gone, so hand the ticket back. Nothing else about the
+ * claim changes.
+ */
+
+/**
+ * `workspace.archived` fires when the archive record is saved, which can be a
+ * beat ahead of Paseo removing the worktree. The hook itself is killed at 30
+ * seconds, so this waits well inside that.
+ */
+const WORKTREE_WAIT_MS = 20_000;
+const WORKTREE_POLL_MS = 500;
+
+/** How many recent agents a workspace's ticket labels are looked for in. */
+const AGENT_PAGE_SIZE = 200;
+
+/** True once the directory is gone, false when it outlived the wait. */
+async function waitForWorktreeGone(dir: string, signal: AbortSignal): Promise<boolean> {
+  const deadline = Date.now() + WORKTREE_WAIT_MS;
+  for (;;) {
+    if (!existsSync(dir)) return true;
+    const left = deadline - Date.now();
+    if (left <= 0 || signal.aborted) return false;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(WORKTREE_POLL_MS, left)));
+  }
+}
+
+/** The issue number a dispatched agent carries, or null on any other agent. */
+function ticketNumber(labels: Record<string, string> | undefined): number | null {
+  const raw = labels?.[AGENT_TICKET_LABEL];
+  if (raw === undefined) return null;
+  const number = Number.parseInt(raw, 10);
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+/**
+ * Every ticket dispatched into this workspace. A batch is one ticket per
+ * workspace, but reading the set costs the same as reading one.
+ */
+async function workspaceTickets(
+  paseo: PluginHookContext["paseo"],
+  workspaceId: string,
+): Promise<number[]> {
+  const { entries } = await paseo.agents.list({
+    // The agent is archived alongside its workspace, so the default live view
+    // would already have lost it by the time this runs.
+    filter: { includeArchived: true },
+    sort: [{ key: "updated_at", direction: "desc" }],
+    page: { limit: AGENT_PAGE_SIZE },
+  });
+
+  const numbers = new Set<number>();
+  for (const entry of entries) {
+    if (entry.agent.workspaceId !== workspaceId) continue;
+    const number = ticketNumber(entry.agent.labels);
+    if (number !== null) numbers.add(number);
+  }
+  return [...numbers];
+}
+
+/**
+ * The main checkout behind a workspace, read from daemon state rather than from
+ * disk, because the worktree the agent ran in no longer exists by this point.
+ */
+async function projectRootFor(
+  paseo: PluginHookContext["paseo"],
+  workspaceId: string | null,
+  projectId: string | null,
+): Promise<string | null> {
+  if (projectId !== null) {
+    const { projects } = await paseo.projects.list();
+    const hit = projects.find((project) => project.projectId === projectId);
+    if (hit) return hit.projectRootPath;
+  }
+
+  if (workspaceId !== null) {
+    const { entries } = await paseo.workspaces.list();
+    const hit = entries.find((entry) => entry.id === workspaceId);
+    if (hit) return hit.projectRootPath;
+  }
+
+  return null;
+}
+
+/** State, assignees, and your login in one call, so the release can be careful. */
+const CLAIM_QUERY = `
+query($owner:String!,$name:String!,$number:Int!){
+  viewer{login}
+  repository(owner:$owner,name:$name){
+    issue(number:$number){state assignees(first:10){nodes{login}}}
+  }
+}`;
+
+interface ClaimPage {
+  data?: {
+    viewer?: { login?: string };
+    repository?: {
+      issue?: {
+        state?: string;
+        assignees?: { nodes?: Array<{ login?: string }> };
+      } | null;
+    } | null;
+  };
+  errors?: Array<{ message?: string }>;
+}
+
+/**
+ * Drops your assignee from an issue, so the board reads it as `ready` again.
+ *
+ * Never throws: this runs from a lifecycle hook nobody is watching, and a
+ * GitHub failure must not take the archive down with it. A ticket that is
+ * closed, or assigned to somebody else, is left exactly as it is.
+ */
+async function releaseClaim(
+  root: string,
+  repo: string,
+  number: number,
+  why: string,
+): Promise<void> {
+  const slash = repo.indexOf("/");
+  const read = await run(
+    ghBinary(),
+    [
+      "api",
+      "graphql",
+      "-f",
+      `query=${CLAIM_QUERY}`,
+      "-f",
+      `owner=${repo.slice(0, slash)}`,
+      "-f",
+      `name=${repo.slice(slash + 1)}`,
+      "-F",
+      `number=${number}`,
+    ],
+    root,
+  );
+  if (read.code !== 0) {
+    console.error(`[tickets] could not read #${number} on ${repo}: ${failure(read)}`);
+    return;
+  }
+
+  const parsed = parseJson<ClaimPage>(read.stdout, "the claim query");
+  const problem = parsed.errors?.[0]?.message;
+  if (problem !== undefined) {
+    console.error(`[tickets] GitHub rejected the claim query for #${number}: ${problem}`);
+    return;
+  }
+
+  const issue = parsed.data?.repository?.issue;
+  if (!issue) {
+    console.error(`[tickets] #${number} is not an issue on ${repo}, claim left alone`);
+    return;
+  }
+  if ((issue.state ?? "OPEN").toUpperCase() !== "OPEN") {
+    console.log(`[tickets] #${number} is closed, nothing to release`);
+    return;
+  }
+
+  const me = parsed.data?.viewer?.login ?? "";
+  const assignees = (issue.assignees?.nodes ?? []).map((node) => node.login ?? "").filter(Boolean);
+  if (!assignees.includes(me)) {
+    console.log(
+      `[tickets] #${number} is not claimed by ${me || "you"}` +
+        (assignees.length > 0 ? ` (${assignees.join(", ")})` : "") +
+        ", nothing to release",
+    );
+    return;
+  }
+
+  const edited = await run(
+    ghBinary(),
+    ["issue", "edit", String(number), "--repo", repo, "--remove-assignee", "@me"],
+    root,
+  );
+  if (edited.code !== 0) {
+    console.error(`[tickets] could not un-assign #${number}: ${failure(edited)}`);
+    return;
+  }
+
+  // A board drawn seconds ago still calls this ticket claimed.
+  boardCache.delete(root);
+  console.log(`[tickets] released #${number} on ${repo}: ${why}`);
+}
+
+/** Resolves the repo behind a main checkout and releases each ticket in turn. */
+async function releaseAll(
+  projectRoot: string,
+  numbers: readonly number[],
+  why: string,
+): Promise<void> {
+  const root = await resolveRepoRoot(projectRoot);
+  const repo = await resolveRepo(root);
+  for (const number of numbers) await releaseClaim(root, repo, number, why);
+}
+
+/**
+ * A workspace archived without merging takes its worktree with it, so every
+ * ticket dispatched into it goes back on the board.
+ */
+export async function workspaceArchivedHook(
+  event: PluginLifecycleEvents["workspace.archived"],
+  context: PluginHookContext,
+): Promise<void> {
+  const { workspace } = event;
+  try {
+    // Read the labels before the wait: the agents are archived with the
+    // workspace and this is the only record of which ticket they held.
+    const numbers = await workspaceTickets(context.paseo, workspace.id);
+    if (numbers.length === 0) return;
+
+    if (!(await waitForWorktreeGone(workspace.cwd, context.signal))) {
+      console.log(`[tickets] ${workspace.cwd} is still on disk, claims left alone`);
+      return;
+    }
+
+    const projectRoot = await projectRootFor(context.paseo, workspace.id, workspace.projectId);
+    if (projectRoot === null) {
+      console.error(`[tickets] no project root for archived workspace ${workspace.id}`);
+      return;
+    }
+
+    await releaseAll(projectRoot, numbers, `${workspace.name ?? workspace.id} was archived`);
+  } catch (caught) {
+    console.error(`[tickets] release after archive failed: ${toMessage(caught)}`);
+  }
+}
+
+/**
+ * The backstop, for a worktree removed under a workspace that still exists.
+ * Costs one `existsSync` on a turn that ended in its own worktree, which is
+ * every normal turn.
+ */
+export async function agentTurnEndedHook(
+  event: PluginLifecycleEvents["agent.turn_ended"],
+  context: PluginHookContext,
+): Promise<void> {
+  const { agent } = event;
+  try {
+    if (agent.cwd === "" || existsSync(agent.cwd)) return;
+
+    const refreshed = await context.paseo.agents.ref(agent.id).refresh();
+    const number = ticketNumber(refreshed?.agent.labels);
+    if (number === null) return;
+
+    const projectRoot =
+      refreshed?.project?.checkout.mainRepoRoot ??
+      (await projectRootFor(context.paseo, agent.workspaceId, null));
+    if (projectRoot === null) {
+      console.error(`[tickets] no project root for agent ${agent.id}`);
+      return;
+    }
+
+    await releaseAll(projectRoot, [number], `the worktree ${agent.cwd} is gone`);
+  } catch (caught) {
+    console.error(`[tickets] release after turn failed: ${toMessage(caught)}`);
   }
 }

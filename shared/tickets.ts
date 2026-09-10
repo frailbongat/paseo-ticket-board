@@ -45,6 +45,13 @@ export const WAYFINDER_TYPE_LABELS = [
   "wayfinder:task",
 ] as const;
 
+/**
+ * Agent label carrying the ticket number, stamped at dispatch. It is the only
+ * record tying a Paseo workspace back to its issue, so releasing a claim reads
+ * it back off the agent.
+ */
+export const AGENT_TICKET_LABEL = "ticket";
+
 const WAYFINDER_PREFIX = "wayfinder:";
 const IMPECCABLE_PREFIX = "impeccable:";
 

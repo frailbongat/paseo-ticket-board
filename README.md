@@ -71,6 +71,12 @@ working. That happens on a repository you cannot write to.
 
 A claim costs no extra reads. Assignees already arrive with the issue list.
 
+The claim is given back when the worktree goes away. `workspace.archived` waits for Paseo to remove
+the directory, reads the `ticket` label off the workspace's agents, and drops your assignee, so a
+workspace archived without merging puts its ticket back on the board as `ready`. `agent.turn_ended`
+is the backstop for a worktree removed by hand under a workspace that still exists. A ticket that is
+closed, assigned to somebody else, or still sitting in a live worktree is left alone.
+
 ## Per-project setup and teardown
 
 Every dispatch gets its own worktree, but a worktree is only isolated if the project makes it so.
@@ -111,6 +117,8 @@ flight then fail each other's tests, and the agents read that as a bug in their 
 | RPC `ticket-board.tickets.list`           | Daemon subprocess        | –      |
 | RPC `ticket-board.dispatch.plan`          | Daemon subprocess        | –      |
 | RPC `ticket-board.dispatch.claim`         | Daemon subprocess        | –      |
+| Hook `workspace.archived`                 | Daemon subprocess        | –      |
+| Hook `agent.turn_ended`                   | Daemon subprocess        | –      |
 
 Only the sidebar item reaches a phone. The mobile workspace header menu offers agents, terminals, and
 browsers and never consults the plugin panel catalog, and the Command Center opens on a keyboard
@@ -121,9 +129,9 @@ shortcut alone.
 | File                       | Runtime | Holds                                                              |
 | -------------------------- | ------- | ------------------------------------------------------------------ |
 | `index.client.tsx`         | client  | Surface, sidebar item, panel, and Command Center wiring            |
-| `index.server.ts`          | daemon  | RPC handler wiring                                                 |
+| `index.server.ts`          | daemon  | RPC handler and lifecycle hook wiring                              |
 | `shared/tickets.ts`        | both    | Zod RPC contracts, label vocabulary, kind detection, prompts, the claim marker |
-| `server/tickets.ts`        | daemon  | Every `gh` and `git` call, the ready rules, the claim, the board cache |
+| `server/tickets.ts`        | daemon  | Every `gh` and `git` call, the ready rules, the claim and its release, the board cache |
 | `client/board.tsx`         | client  | The board: list, kind filter, multi-select, force, refresh, dispatch |
 | `client/board-panel.tsx`   | client  | Workspace-panel wrapper, repo from `projectRootPath`                |
 | `client/board-surface.tsx` | client  | Sidebar wrapper, repo from the host's git projects                  |

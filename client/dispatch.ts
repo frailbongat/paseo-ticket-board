@@ -1,5 +1,10 @@
 import type { usePaseo } from "@getpaseo/plugin/client";
-import { AGENT_PROVIDER, AGENT_THINKING, type DispatchPlan } from "../shared/tickets";
+import {
+  AGENT_PROVIDER,
+  AGENT_THINKING,
+  AGENT_TICKET_LABEL,
+  type DispatchPlan,
+} from "../shared/tickets";
 
 type PaseoApi = ReturnType<typeof usePaseo>;
 
@@ -37,7 +42,7 @@ export async function dispatchPlan(paseo: PaseoApi, plan: DispatchPlan): Promise
       title: plan.agentTitle,
       prompt: plan.prompt,
       // Two labels, so a ticket's runs stay findable by number and by skill.
-      labels: { ticket: String(plan.number), kind: plan.kind },
+      labels: { [AGENT_TICKET_LABEL]: String(plan.number), kind: plan.kind },
     });
 
     return {
