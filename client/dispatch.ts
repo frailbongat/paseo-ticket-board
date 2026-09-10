@@ -1,10 +1,6 @@
 import type { usePaseo } from "@getpaseo/plugin/client";
-import {
-  AGENT_PROVIDER,
-  AGENT_THINKING,
-  AGENT_TICKET_LABEL,
-  type DispatchPlan,
-} from "../shared/tickets";
+import type { BoardSettings } from "../shared/settings";
+import { AGENT_TICKET_LABEL, type DispatchPlan } from "../shared/tickets";
 
 type PaseoApi = ReturnType<typeof usePaseo>;
 
@@ -21,7 +17,11 @@ export interface DispatchResult {
  * already holding the skill command its kind calls for. The plan comes from the
  * daemon, which owns branch naming, kind detection, and the ready rules.
  */
-export async function dispatchPlan(paseo: PaseoApi, plan: DispatchPlan): Promise<DispatchResult> {
+export async function dispatchPlan(
+  paseo: PaseoApi,
+  plan: DispatchPlan,
+  settings: BoardSettings,
+): Promise<DispatchResult> {
   try {
     const workspace = await paseo.workspaces.create({
       title: plan.agentTitle,
@@ -36,8 +36,8 @@ export async function dispatchPlan(paseo: PaseoApi, plan: DispatchPlan): Promise
 
     const agent = await workspace.agents.create({
       config: {
-        provider: AGENT_PROVIDER,
-        thinkingOptionId: AGENT_THINKING,
+        provider: settings.agentProvider,
+        thinkingOptionId: settings.agentThinking,
       },
       title: plan.agentTitle,
       prompt: plan.prompt,
@@ -69,14 +69,13 @@ export async function dispatchPlan(paseo: PaseoApi, plan: DispatchPlan): Promise
  * per ticket, so five tickets meant five installs end to end.
  *
  * Branch names come pre-deduped from the plan, so order no longer decides them
- * and the batch can overlap. The cap is there because the adds all touch one
- * repository's index, and a wide fan-out just trades a queue for lock retries.
+ * and the batch can overlap. How wide is a setting, because the adds all touch
+ * one repository's index and a wide fan-out trades a queue for lock retries.
  */
-const DISPATCH_CONCURRENCY = 3;
-
 export async function dispatchPlans(
   paseo: PaseoApi,
   plans: readonly DispatchPlan[],
+  settings: BoardSettings,
 ): Promise<DispatchResult[]> {
   const results = new Array<DispatchResult>(plans.length);
   let next = 0;
@@ -84,12 +83,12 @@ export async function dispatchPlans(
   async function pump(): Promise<void> {
     while (next < plans.length) {
       const index = next++;
-      results[index] = await dispatchPlan(paseo, plans[index] as DispatchPlan);
+      results[index] = await dispatchPlan(paseo, plans[index] as DispatchPlan, settings);
     }
   }
 
   await Promise.all(
-    Array.from({ length: Math.min(DISPATCH_CONCURRENCY, plans.length) }, pump),
+    Array.from({ length: Math.min(settings.dispatchConcurrency, plans.length) }, pump),
   );
   return results;
 }

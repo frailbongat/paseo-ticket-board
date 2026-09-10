@@ -8,12 +8,14 @@ import type {
   PluginLifecycleEvents,
 } from "@getpaseo/plugin/server";
 import {
+  DEFAULT_VOCABULARY,
+  type LabelVocabulary,
+} from "../shared/settings";
+import {
   AGENT_TICKET_LABEL,
-  DEFERRED_LABEL,
   type DispatchPlan,
   IMPECCABLE_SPEC_LABEL,
   KIND_ORDER,
-  READY_LABEL,
   type SpecRef,
   type Ticket,
   type TicketBoard,
@@ -58,12 +60,14 @@ const MAX_ISSUE_PAGES = 10;
 const MAX_SPEC_DEPTH = 3;
 
 /** Every label that puts an issue, or anything under it, in scope. */
-const SEED_LABELS: readonly string[] = [
-  READY_LABEL,
-  WAYFINDER_MAP_LABEL,
-  IMPECCABLE_SPEC_LABEL,
-  ...WAYFINDER_TYPE_LABELS,
-];
+function seedLabels(vocabulary: LabelVocabulary): readonly string[] {
+  return [
+    vocabulary.readyLabel,
+    WAYFINDER_MAP_LABEL,
+    IMPECCABLE_SPEC_LABEL,
+    ...WAYFINDER_TYPE_LABELS,
+  ];
+}
 
 /** The daemon inherits a launchd PATH that usually has no Homebrew in it. */
 const EXTRA_PATH = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
@@ -352,8 +356,8 @@ function isLabelledSpec(labels: readonly string[]): boolean {
   return labels.includes(WAYFINDER_MAP_LABEL) || labels.includes(IMPECCABLE_SPEC_LABEL);
 }
 
-function hasSeedLabel(labels: readonly string[]): boolean {
-  return labels.some((label) => SEED_LABELS.includes(label));
+function hasSeedLabel(labels: readonly string[], seeds: readonly string[]): boolean {
+  return labels.some((label) => seeds.includes(label));
 }
 
 /** Parent, grandparent, great-grandparent, whatever the query returned. */
@@ -370,7 +374,7 @@ function ancestry(issue: GqlIssue): Array<{ ref: SpecRef; labels: string[] }> {
   return chain;
 }
 
-function toCandidate(issue: GqlIssue): Candidate {
+function toCandidate(issue: GqlIssue, seeds: readonly string[]): Candidate {
   const labels = names(issue.labels);
   const chain = ancestry(issue);
 
@@ -400,7 +404,8 @@ function toCandidate(issue: GqlIssue): Candidate {
     inheritedKind,
     // The immediate parent, matching how the old expansion walk assigned specs.
     spec: chain[0]?.ref ?? null,
-    inScope: hasSeedLabel(labels) || chain.some((link) => hasSeedLabel(link.labels)),
+    inScope:
+      hasSeedLabel(labels, seeds) || chain.some((link) => hasSeedLabel(link.labels, seeds)),
   };
 }
 
@@ -594,8 +599,10 @@ function shapeProblem(kind: TicketKind, body: string): string | null {
 async function buildBoard(
   repoDir: string,
   paseo: PluginHandlerContext["paseo"],
+  vocabulary: LabelVocabulary,
 ): Promise<TicketBoard> {
   const fetchedAt = new Date().toISOString();
+  const seeds = seedLabels(vocabulary);
   const root = await resolveRepoRoot(repoDir);
   const repo = await resolveRepo(root);
 
@@ -620,15 +627,15 @@ async function buildBoard(
   }
 
   for (const issue of snapshot.issues) {
-    const candidate = toCandidate(issue);
+    const candidate = toCandidate(issue, seeds);
     // Nothing under a seed label is the board's business, and listing every
     // other open issue as skipped would bury the ones that nearly qualified.
     if (!candidate.inScope) continue;
 
     const kind = detectKind(candidate.labels, candidate.inheritedKind);
 
-    if (candidate.labels.includes(DEFERRED_LABEL)) {
-      skipped.push(`#${candidate.number}: ${DEFERRED_LABEL}`);
+    if (candidate.labels.includes(vocabulary.deferredLabel)) {
+      skipped.push(`#${candidate.number}: ${vocabulary.deferredLabel}`);
       continue;
     }
     // Spec before triage, so a map reads as "tracking spec" rather than as a
@@ -641,8 +648,8 @@ async function buildBoard(
       skipped.push(`#${candidate.number}: spec, it owns ${candidate.subIssues} sub-issue(s)`);
       continue;
     }
-    if (!isTakeable(candidate.labels)) {
-      skipped.push(`#${candidate.number}: no ${READY_LABEL} label`);
+    if (!isTakeable(candidate.labels, vocabulary.readyLabel)) {
+      skipped.push(`#${candidate.number}: no ${vocabulary.readyLabel} label`);
       continue;
     }
 
@@ -714,17 +721,23 @@ const BOARD_CACHE_MS = 30_000;
 
 const boardCache = new Map<string, { at: number; board: TicketBoard }>();
 
-function cacheBoard(board: TicketBoard): void {
+/** A board is only reusable for the vocabulary it was picked with. */
+function cacheKey(root: string, vocabulary: LabelVocabulary): string {
+  return `${root}\n${vocabulary.readyLabel}\n${vocabulary.deferredLabel}`;
+}
+
+function cacheBoard(board: TicketBoard, vocabulary: LabelVocabulary): void {
   if (board.repoDir !== null && board.error === null) {
-    boardCache.set(board.repoDir, { at: Date.now(), board });
+    boardCache.set(cacheKey(board.repoDir, vocabulary), { at: Date.now(), board });
   }
 }
 
-function cachedBoard(root: string): TicketBoard | null {
-  const hit = boardCache.get(root);
+function cachedBoard(root: string, vocabulary: LabelVocabulary): TicketBoard | null {
+  const key = cacheKey(root, vocabulary);
+  const hit = boardCache.get(key);
   if (hit === undefined) return null;
   if (Date.now() - hit.at > BOARD_CACHE_MS) {
-    boardCache.delete(root);
+    boardCache.delete(key);
     return null;
   }
   return hit.board;
@@ -737,13 +750,14 @@ function toMessage(error: unknown): string {
 }
 
 export async function listTicketsHandler(
-  input: { repoDir: string },
+  input: { repoDir: string; vocabulary?: LabelVocabulary },
   context: PluginHandlerContext,
 ): Promise<TicketBoard> {
   const started = Date.now();
+  const vocabulary = input.vocabulary ?? DEFAULT_VOCABULARY;
   try {
-    const board = await buildBoard(input.repoDir, context.paseo);
-    cacheBoard(board);
+    const board = await buildBoard(input.repoDir, context.paseo, vocabulary);
+    cacheBoard(board, vocabulary);
     const byKind = KIND_ORDER.map(
       (kind) => `${board.tickets.filter((ticket) => ticket.kind === kind).length} ${kind}`,
     ).join(", ");
@@ -795,18 +809,26 @@ export async function claimDispatchHandler(input: {
 }
 
 export async function planDispatchHandler(
-  input: { repoDir: string; numbers: number[]; force: boolean },
+  input: {
+    repoDir: string;
+    numbers: number[];
+    force: boolean;
+    vocabulary?: LabelVocabulary;
+  },
   context: PluginHandlerContext,
 ): Promise<{ plans: DispatchPlan[]; error: string | null }> {
   const started = Date.now();
+  const vocabulary = input.vocabulary ?? DEFAULT_VOCABULARY;
   try {
     const root = await resolveRepoRoot(input.repoDir);
 
     // A board the panel drew seconds ago is good enough to plan from. What can
     // change underneath it is a branch, and the rescan below is local and free.
-    const board = cachedBoard(root) ?? (await buildBoard(input.repoDir, context.paseo));
+    const board =
+      cachedBoard(root, vocabulary) ??
+      (await buildBoard(input.repoDir, context.paseo, vocabulary));
     if (board.error !== null) return { plans: [], error: board.error };
-    cacheBoard(board);
+    cacheBoard(board, vocabulary);
 
     const baseBranch = board.baseBranch as string;
     const inFlight = await scanInFlight(board.repoDir as string, context.paseo);

@@ -5,6 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, Pressable, ScrollView, Text, View } from "react-native";
 import { dispatchPlans } from "./dispatch";
+import { useBoardSettings } from "./settings";
+import { vocabularyOf } from "../shared/settings";
 import {
   KIND_ICON,
   MONO,
@@ -17,10 +19,7 @@ import {
   withAlpha,
 } from "./theme";
 import {
-  AGENT_PROVIDER,
-  AGENT_THINKING,
   KIND_ORDER,
-  READY_LABEL,
   TICKET_KINDS,
   type Ticket,
   type TicketBoard,
@@ -56,6 +55,7 @@ function TicketRow({
   selectable,
   pending,
   force,
+  readyLabel,
   onToggle,
 }: {
   ticket: Ticket;
@@ -66,6 +66,8 @@ function TicketRow({
   /** This ticket is part of the dispatch currently in flight. */
   pending: boolean;
   force: boolean;
+  /** Hidden from the chips: every listed ticket carries it. */
+  readyLabel: string;
   onToggle: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -74,7 +76,7 @@ function TicketRow({
   const kind = TICKET_KINDS[ticket.kind];
   const state = statePresentation(ticket.state, theme);
   const facts = factsFor(ticket, force);
-  const labels = ticket.labels.filter((label) => label !== READY_LABEL).map(shortLabel);
+  const labels = ticket.labels.filter((label) => label !== readyLabel).map(shortLabel);
 
   useEffect(() => {
     Animated.timing(fade, {
@@ -223,6 +225,8 @@ export interface BoardProps {
  */
 export function Board({ theme, layout, navigation, repoDir, header }: BoardProps) {
   const paseo = usePaseo();
+  const settings = useBoardSettings();
+  const { readyLabel, deferredLabel } = settings;
   const toast = useToast();
   const queryClient = useQueryClient();
   const read = useRpc(listTickets);
@@ -235,9 +239,12 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
   const [showSkipped, setShowSkipped] = useState(false);
 
   const board = useQuery({
-    queryKey: ["ticket-board", "board", repoDir],
+    // The vocabulary is part of the question, so editing it in settings draws a
+    // different board instead of serving the previous one from the cache.
+    queryKey: ["ticket-board", "board", repoDir, readyLabel, deferredLabel],
     enabled: typeof repoDir === "string" && repoDir.length > 0,
-    queryFn: () => read({ repoDir: repoDir as string }),
+    queryFn: () =>
+      read({ repoDir: repoDir as string, vocabulary: { readyLabel, deferredLabel } }),
     // Reopening the panel should redraw the last board, not spin. Refresh is a
     // button, and a dispatch invalidates the key anyway.
     staleTime: 30_000,
@@ -280,10 +287,11 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
         repoDir: repoDir as string,
         numbers: [...dispatchable],
         force,
+        vocabulary: vocabularyOf(settings),
       });
       if (planned.error !== null) throw new Error(planned.error);
 
-      const results = await dispatchPlans(paseo, planned.plans);
+      const results = await dispatchPlans(paseo, planned.plans, settings);
       const started = results.filter((result) => result.error === null);
 
       // Claim only what actually came up. A dispatch that failed has to leave
@@ -487,7 +495,7 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
             theme={theme}
             icon="Inbox"
             title="No workable tickets"
-            detail={`Label an open issue \u201c${READY_LABEL}\u201d, or let /wayfinder write one, and it shows up on the next refresh.`}
+            detail={`Label an open issue \u201c${readyLabel}\u201d, or let /wayfinder write one, and it shows up on the next refresh.`}
             action={{ label: "Refresh", onPress: () => void board.refetch() }}
           />
         ) : null}
@@ -511,6 +519,7 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
                 theme={theme}
                 compact={layout.compact}
                 force={force}
+                readyLabel={readyLabel}
                 selected={selected.includes(ticket.number)}
                 selectable={canDispatch(ticket, force)}
                 pending={busy && dispatchable.includes(ticket.number)}
@@ -568,7 +577,7 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
           <Text
             style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.label, lineHeight: 16 }}
           >
-            {AGENT_PROVIDER} · thinking {AGENT_THINKING}
+            {settings.agentProvider} · thinking {settings.agentThinking}
             {board.data ? ` · updated ${clockTime(board.data.fetchedAt)}` : ""}
           </Text>
         ) : null}

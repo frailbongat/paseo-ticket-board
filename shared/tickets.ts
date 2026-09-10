@@ -1,5 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { LabelVocabularySchema } from "./settings";
 
 /**
  * Contracts and constants shared by the panel and the daemon handler.
@@ -7,25 +8,14 @@ import { z } from "zod";
  * The board lists workable GitHub tickets of three kinds and dispatches each
  * one into its own worktree workspace with the skill that ticket was written
  * for. Ticket selection lives in the server; this file only carries the wire
- * shapes, the label vocabulary, and the prompts.
+ * shapes, the fixed label vocabulary, and the prompts.
+ *
+ * The parts of the vocabulary a user can retune live in `shared/settings.ts`.
+ * The labels below are written by skills rather than by the person triaging,
+ * so they stay constants.
  */
-
-/**
- * Bare `pi` resolves a model that answers 400 "draws from your extra usage" on
- * this account, so the provider is pinned all the way down to the model.
- */
-export const AGENT_PROVIDER = "pi/cliproxyapi/claude-opus-5";
-
-/** Provider reasoning level. */
-export const AGENT_THINKING = "high";
 
 // --- label vocabulary ---------------------------------------------------------
-
-/** The label a ticket needs before the repo-wide pick will look at it. */
-export const READY_LABEL = "ready-for-agent";
-
-/** Decided, not now. Never dispatched, whatever else the ticket carries. */
-export const DEFERRED_LABEL = "deferred";
 
 /** Canonical map for a wayfinding effort. A spec, never worked directly. */
 export const WAYFINDER_MAP_LABEL = "wayfinder:map";
@@ -108,8 +98,8 @@ export function isWayfinderTicket(labels: readonly string[]): boolean {
 }
 
 /** True when the ticket has passed triage and an agent may take it. */
-export function isTakeable(labels: readonly string[]): boolean {
-  return labels.includes(READY_LABEL) || isWayfinderTicket(labels);
+export function isTakeable(labels: readonly string[], readyLabel: string): boolean {
+  return labels.includes(readyLabel) || isWayfinderTicket(labels);
 }
 
 // --- prompts ------------------------------------------------------------------
@@ -232,6 +222,11 @@ export const listTickets = defineRpc({
   input: z.object({
     /** Any path inside the repo. The server resolves the main checkout itself. */
     repoDir: z.string(),
+    /**
+     * The host's ready and deferred labels. Optional because the daemon cannot
+     * read plugin settings itself: a caller that omits it gets the defaults.
+     */
+    vocabulary: LabelVocabularySchema.optional(),
   }),
   output: TicketBoardSchema,
 });
@@ -259,6 +254,8 @@ export const planDispatch = defineRpc({
     numbers: z.array(z.number()),
     /** Allow tickets that are running or claimed, on a `-2`/`-3` branch. */
     force: z.boolean(),
+    /** Same document as `listTickets`, for the planner's own board build. */
+    vocabulary: LabelVocabularySchema.optional(),
   }),
   output: z.object({
     plans: z.array(DispatchPlanSchema),

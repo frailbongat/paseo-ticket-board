@@ -33,10 +33,11 @@ is what stops a labelled ticket being dispatched map-less just because the walk 
 A ticket is **listed** when it is open, past the gate, not deferred, not a spec, correctly shaped for
 its kind, and not assigned to somebody else. Everything else is reported under "Skipped".
 
-- **Gate**: the `ready-for-agent` label, or one of `wayfinder:research`, `wayfinder:prototype`,
-  `wayfinder:grilling`, `wayfinder:task`. Wayfinder writes its own tickets and never applies triage
-  labels, so carrying a type label is its own gate.
-- **Deferred**: a `deferred` label drops the ticket whatever else it carries.
+- **Gate**: the ready label, `ready-for-agent` unless settings say otherwise, or one of
+  `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, `wayfinder:task`. Wayfinder
+  writes its own tickets and never applies triage labels, so carrying a type label is its own gate.
+- **Deferred**: the deferred label, `deferred` unless settings say otherwise, drops the ticket
+  whatever else it carries.
 - **Spec**: an issue carrying `wayfinder:map` or `impeccable:spec`, or one that owns sub-issues.
   Specs are replaced by their open sub-issues, walked up to three levels down, then filtered like any
   other candidate. A spec hands its kind down, which is how a plain `ready-for-agent` child of a
@@ -114,6 +115,9 @@ flight then fail each other's tests, and the agents read that as a bug in their 
 | Sidebar item **Tickets**                  | Sidebar, under Schedules | Yes    |
 | Workspace panel **Tickets**               | Workspace new-tab menu   | No     |
 | Command Center item **Dispatch ticket**   | ⌘K in any workspace      | No     |
+| Command Center item **Ticket board settings** | ⌘K anywhere          | No     |
+| Settings screen **Ticket board**          | Settings → Plugins       | Yes    |
+| Settings document `board`                 | Daemon subprocess        | –      |
 | RPC `ticket-board.tickets.list`           | Daemon subprocess        | –      |
 | RPC `ticket-board.dispatch.plan`          | Daemon subprocess        | –      |
 | RPC `ticket-board.dispatch.claim`         | Daemon subprocess        | –      |
@@ -130,12 +134,16 @@ shortcut alone.
 | -------------------------- | ------- | ------------------------------------------------------------------ |
 | `index.client.tsx`         | client  | Surface, sidebar item, panel, and Command Center wiring            |
 | `index.server.ts`          | daemon  | RPC handler and lifecycle hook wiring                              |
-| `shared/tickets.ts`        | both    | Zod RPC contracts, label vocabulary, kind detection, prompts, the claim marker |
+| `shared/settings.ts`       | both    | Settings document, its defaults, and the label vocabulary sent to the daemon |
+| `shared/tickets.ts`        | both    | Zod RPC contracts, fixed labels, kind detection, prompts, the claim marker |
 | `server/tickets.ts`        | daemon  | Every `gh` and `git` call, the ready rules, the claim and its release, the board cache |
 | `client/board.tsx`         | client  | The board: list, kind filter, multi-select, force, refresh, dispatch |
 | `client/board-panel.tsx`   | client  | Workspace-panel wrapper, repo from `projectRootPath`                |
 | `client/board-surface.tsx` | client  | Sidebar wrapper, repo from the host's git projects                  |
 | `client/dispatch.ts`       | client  | Workspace and agent creation through the Paseo SDK                  |
+| `client/settings.ts`       | client  | Reads the settings document, falling back to the defaults           |
+| `client/providers.ts`      | client  | Provider, model, and thinking dropdown options from the daemon      |
+| `client/settings-screen.tsx` | client | The settings screen: one draft, saved as a whole document          |
 | `client/theme.ts`          | client  | Type scale, ticket color mapping, alpha helper                     |
 | `client/ui.tsx`            | client  | Shared presentational pieces: segments, chips, buttons             |
 
@@ -150,13 +158,34 @@ and the local worktree scan races the query rather than waiting on it. There is 
 round trip; the first real call reports a missing login just as clearly.
 
 Dispatch plans from the board the panel drew, when that board is under 30 seconds old, and re-scans
-only the local branches and worktrees. A batch of tickets creates up to three workspaces at a time,
-because branch names are settled before the first one starts.
+only the local branches and worktrees. A batch of tickets creates up to three workspaces at a time by
+default, because branch names are settled before the first one starts.
 
-## Defaults that matter
+## Settings
 
-`pi/cliproxyapi/claude-opus-5`, thinking `high`. Bare `pi` resolves a model that answers 400
-"draws from your extra usage" on this account.
+**Settings → Plugins → paseo-ticket-board → Ticket board**, or **Ticket board settings** in ⌘K.
+Values are stored per host and shared by every client connected to it. The defaults are what the
+board used to hardcode, so a fresh install behaves as before.
+
+| Setting               | Default                        | Why it moves                                                     |
+| --------------------- | ------------------------------ | ---------------------------------------------------------------- |
+| Provider and model    | `pi/cliproxyapi/claude-opus-5` | Bare `pi` answers 400 "draws from your extra usage" here          |
+| Thinking level        | `high`                         | Provider-specific reasoning option id                            |
+| Ready label           | `ready-for-agent`              | Another repo's triage vocabulary                                 |
+| Deferred label        | `deferred`                     | Same                                                             |
+| Worktrees in parallel | 3                              | The worktree adds all touch one repository index                 |
+
+Provider, model, and thinking level are dropdowns filled from the daemon's own provider catalog:
+providers from `providers.waitForReady()`, models and their thinking options from
+`providers.listModels()`. Picking a provider selects that provider's default model, and picking a
+model keeps the thinking level when it exists there. A saved id the catalog no longer offers, such
+as a logged-out provider's, stays selectable and is marked "not available", and a provider that
+lists nothing falls back to a text field so a typed id still works.
+
+The daemon has no read side for plugin settings, so the client sends the two labels along with
+`ticket-board.tickets.list` and `ticket-board.dispatch.plan`. Both fields are optional: a caller
+that omits them gets the defaults. The board's query key carries them too, so editing a label
+draws a new board instead of serving the old one from cache.
 
 Every dispatched agent carries the labels `ticket: <number>` and `kind: <wayfinder|impeccable|implement>`.
 
