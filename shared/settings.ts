@@ -40,6 +40,40 @@ export const DEFAULT_DISPATCH_CONCURRENCY = 3;
 /** Above this the worktree adds spend their time retrying the index lock. */
 export const MAX_DISPATCH_CONCURRENCY = 6;
 
+// --- appearance ---------------------------------------------------------------
+
+/**
+ * How the board draws itself. Stored beside the dispatch settings because it is
+ * the same document and the same save, but it never reaches the daemon: the
+ * server picks tickets, it does not draw them.
+ *
+ * `client/theme.ts` turns these three words into the actual type and spacing
+ * tokens, so nothing outside that file has to know what "roomy" measures.
+ */
+
+/**
+ * The text face. `mono` is the one that also swallows the data face, which is
+ * the point of offering it: the whole board becomes one terminal-ish column.
+ */
+export const FontFamilySchema = z.enum(["system", "sans", "serif", "mono"]);
+export type FontFamilyChoice = z.infer<typeof FontFamilySchema>;
+
+/** A multiplier on the whole type scale, never a single size. */
+export const FontSizeSchema = z.enum(["small", "medium", "large", "xlarge"]);
+export type FontSizeChoice = z.infer<typeof FontSizeSchema>;
+
+/**
+ * Padding and gaps only. Density never hides a line of a ticket: a reader who
+ * wants fewer facts per card is asking for a filter, not for smaller padding.
+ */
+export const CardDensitySchema = z.enum(["tight", "cozy", "roomy"]);
+export type CardDensityChoice = z.infer<typeof CardDensitySchema>;
+
+/** The three defaults reproduce the board exactly as it drew before this group existed. */
+export const DEFAULT_FONT_FAMILY: FontFamilyChoice = "system";
+export const DEFAULT_FONT_SIZE: FontSizeChoice = "medium";
+export const DEFAULT_CARD_DENSITY: CardDensityChoice = "cozy";
+
 const label = (fallback: string) =>
   z.string().trim().min(1, "Enter a label").max(60).default(fallback);
 
@@ -66,6 +100,14 @@ export const BoardSettingsSchema = z.object({
     .min(1)
     .max(MAX_DISPATCH_CONCURRENCY)
     .default(DEFAULT_DISPATCH_CONCURRENCY),
+  /**
+   * Appearance. Every field carries a default, so a document written before
+   * this group existed still parses and the schema version stays at 1. Bumping
+   * it would demand a `migrate` that could only fill in these same defaults.
+   */
+  fontFamily: FontFamilySchema.default(DEFAULT_FONT_FAMILY),
+  fontSize: FontSizeSchema.default(DEFAULT_FONT_SIZE),
+  cardDensity: CardDensitySchema.default(DEFAULT_CARD_DENSITY),
 });
 
 export type BoardSettings = z.infer<typeof BoardSettingsSchema>;
@@ -98,6 +140,23 @@ export const DEFAULT_VOCABULARY: LabelVocabulary = {
 
 export function vocabularyOf(settings: BoardSettings): LabelVocabulary {
   return { readyLabel: settings.readyLabel, deferredLabel: settings.deferredLabel };
+}
+
+// --- appearance selector ------------------------------------------------------
+
+/** The drawing half of the document, the way `vocabularyOf` is the picking half. */
+export interface AppearanceSettings {
+  readonly fontFamily: FontFamilyChoice;
+  readonly fontSize: FontSizeChoice;
+  readonly cardDensity: CardDensityChoice;
+}
+
+export function appearanceOf(settings: AppearanceSettings): AppearanceSettings {
+  return {
+    fontFamily: settings.fontFamily,
+    fontSize: settings.fontSize,
+    cardDensity: settings.cardDensity,
+  };
 }
 
 // --- provider references ------------------------------------------------------

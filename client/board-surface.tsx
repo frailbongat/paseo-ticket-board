@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { Board } from "./board";
-import { TYPE } from "./theme";
+import { useBoardAppearance } from "./settings";
+import { AppearanceContext } from "./theme";
 import { Segment, SegmentTrack } from "./ui";
 
 export const BOARD_SURFACE_ID = "tickets";
@@ -19,6 +20,9 @@ export const BOARD_SURFACE_ID = "tickets";
 export function BoardSurface({ theme, layout, navigation }: PluginSurfaceProps) {
   const paseo = usePaseo();
   const [chosen, setChosen] = useState<string | null>(null);
+  // The picker and the loading line draw before `Board` mounts its own provider,
+  // so this surface carries appearance for the frame around the board.
+  const look = useBoardAppearance(layout.compact);
 
   const projects = useQuery({
     queryKey: ["ticket-board", "projects"],
@@ -61,21 +65,38 @@ export function BoardSurface({ theme, layout, navigation }: PluginSurfaceProps) 
 
   if (projects.isLoading) {
     return (
-      <View style={{ flex: 1, padding: 24, backgroundColor: theme.colors.surface0 }}>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.body }}>
-          Loading projects…
-        </Text>
-      </View>
+      <AppearanceContext.Provider value={look}>
+        <View
+          style={{
+            flex: 1,
+            padding: look.space.screenPad,
+            backgroundColor: theme.colors.surface0,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.colors.foregroundMuted,
+              fontFamily: look.text,
+              fontSize: look.type.body,
+              lineHeight: look.line.body,
+            }}
+          >
+            Loading projects…
+          </Text>
+        </View>
+      </AppearanceContext.Provider>
     );
   }
 
   return (
-    <Board
-      theme={theme}
-      layout={layout}
-      navigation={navigation}
-      repoDir={active?.path ?? null}
-      header={picker}
-    />
+    <AppearanceContext.Provider value={look}>
+      <Board
+        theme={theme}
+        layout={layout}
+        navigation={navigation}
+        repoDir={active?.path ?? null}
+        header={picker}
+      />
+    </AppearanceContext.Provider>
   );
 }

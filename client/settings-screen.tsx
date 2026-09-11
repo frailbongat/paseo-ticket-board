@@ -12,22 +12,36 @@ import {
   SettingsSelect,
 } from "@getpaseo/plugin/client/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Text } from "react-native";
+import { Text, View } from "react-native";
 import {
   BoardSettingsSchema,
   type BoardSettings,
+  type CardDensityChoice,
+  type FontFamilyChoice,
+  type FontSizeChoice,
   MAX_DISPATCH_CONCURRENCY,
   boardSettings,
   joinProviderRef,
   splitProviderRef,
 } from "../shared/settings";
+import { TICKET_KINDS } from "../shared/tickets";
 import {
   type ModelChoice,
   pickThinking,
   useProviderModels,
   useProviders,
 } from "./providers";
-import { TYPE } from "./theme";
+import { AppearanceContext, KIND_ICON, TYPE, buildAppearance } from "./theme";
+import {
+  Checkbox,
+  Chip,
+  RunBand,
+  StateBadge,
+  TicketBody,
+  TicketFrame,
+  TicketHead,
+  TicketMark,
+} from "./ui";
 
 export const BOARD_SETTINGS_SCREEN_ID = "board";
 
@@ -41,9 +55,107 @@ const CONCURRENCY_OPTIONS = Array.from({ length: MAX_DISPATCH_CONCURRENCY }, (_,
   value: String(index + 1),
 }));
 
+const FONT_OPTIONS: readonly { label: string; value: FontFamilyChoice }[] = [
+  { label: "System", value: "system" },
+  { label: "Sans-serif", value: "sans" },
+  { label: "Serif", value: "serif" },
+  { label: "Monospace", value: "mono" },
+];
+
+const FONT_SIZE_OPTIONS: readonly { label: string; value: FontSizeChoice }[] = [
+  { label: "Small", value: "small" },
+  { label: "Medium", value: "medium" },
+  { label: "Large", value: "large" },
+  { label: "Extra large", value: "xlarge" },
+];
+
+const DENSITY_OPTIONS: readonly { label: string; value: CardDensityChoice }[] = [
+  { label: "Tight", value: "tight" },
+  { label: "Cozy", value: "cozy" },
+  { label: "Roomy", value: "roomy" },
+];
+
 interface Option {
   label: string;
   value: string;
+}
+
+/**
+ * One real ticket card at the draft's appearance.
+ *
+ * Built from the board's own frame, head, and run band rather than a drawing of
+ * them, so it cannot drift from what saving actually produces. It follows the
+ * draft rather than the saved document, which is the point: the three controls
+ * above it are the only settings on this screen whose effect you can judge
+ * before committing to it.
+ */
+function AppearancePreview({
+  draft,
+  theme,
+}: {
+  draft: BoardSettings;
+  theme: PluginSurfaceProps["theme"];
+}) {
+  const { fontFamily, fontSize, cardDensity } = draft;
+  const look = useMemo(
+    () => buildAppearance({ fontFamily, fontSize, cardDensity }),
+    [fontFamily, fontSize, cardDensity],
+  );
+
+  return (
+    <AppearanceContext.Provider value={look}>
+      <View
+        accessibilityRole="image"
+        accessibilityLabel="Preview of a ticket card at the selected font and density"
+        style={{ gap: 6, paddingTop: 8 }}
+      >
+        <TicketFrame theme={theme}>
+          <TicketBody style={{ flexDirection: "row", gap: 12 }}>
+            <TicketMark>
+              <Checkbox checked theme={theme} />
+            </TicketMark>
+            <View style={{ flex: 1, gap: look.space.innerGap }}>
+              <TicketHead
+                theme={theme}
+                number={112}
+                title="Hold the dock open while the agent runs"
+                trailing={
+                  <StateBadge
+                    label="Ready"
+                    color={theme.colors.statusSuccess}
+                    hollow={false}
+                  />
+                }
+              />
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                <Chip
+                  text="Wayfinder"
+                  icon={KIND_ICON.wayfinder}
+                  tint={theme.colors.accent}
+                  theme={theme}
+                />
+                <Chip text="enhancement" theme={theme} />
+              </View>
+            </View>
+          </TicketBody>
+          <RunBand
+            theme={theme}
+            skill={TICKET_KINDS.wayfinder.skill}
+            branch="112-hold-dock"
+          />
+        </TicketFrame>
+        <Text
+          style={{
+            color: theme.colors.foregroundMuted,
+            fontSize: TYPE.label,
+            lineHeight: 16,
+          }}
+        >
+          The board redraws to match the moment you save.
+        </Text>
+      </View>
+    </AppearanceContext.Provider>
+  );
 }
 
 /**
@@ -274,6 +386,36 @@ function BoardSettingsForm({
             onValueChange={(value) => change("dispatchConcurrency")(Number.parseInt(value, 10))}
           />
         </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Appearance">
+        <SettingsCard>
+          <SettingsSelect
+            label="Font"
+            hint="Ticket titles and prose. Numbers, branches, and commands stay monospaced."
+            value={draft.fontFamily}
+            options={FONT_OPTIONS}
+            disabled={settings.saving}
+            onValueChange={change("fontFamily")}
+          />
+          <SettingsSelect
+            label="Text size"
+            hint="Scales the whole board together, so the steps between sizes survive."
+            value={draft.fontSize}
+            options={FONT_SIZE_OPTIONS}
+            disabled={settings.saving}
+            onValueChange={change("fontSize")}
+          />
+          <SettingsSelect
+            label="Card density"
+            hint="Padding inside a ticket and the gap between tickets. Never hides a line."
+            value={draft.cardDensity}
+            options={DENSITY_OPTIONS}
+            disabled={settings.saving}
+            onValueChange={change("cardDensity")}
+          />
+        </SettingsCard>
+        <AppearancePreview draft={draft} theme={theme} />
       </SettingsSection>
 
       <SettingsSection title="Changes">

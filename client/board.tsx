@@ -8,14 +8,15 @@ import { dispatchPlans } from "./dispatch";
 import { useBoardSettings } from "./settings";
 import { vocabularyOf } from "../shared/settings";
 import {
+  AppearanceContext,
   KIND_ICON,
-  MONO,
-  TYPE,
+  buildAppearance,
   clockTime,
   factColor,
   factsFor,
   shortLabel,
   statePresentation,
+  useAppearance,
   withAlpha,
 } from "./theme";
 import {
@@ -35,10 +36,16 @@ import {
   Checkbox,
   Chip,
   EmptyState,
+  RunBand,
   Segment,
   SegmentTrack,
   SkeletonRow,
   StateBadge,
+  TicketBody,
+  TicketFrame,
+  TicketHead,
+  TicketMark,
+  TicketNote,
 } from "./ui";
 
 /** Ready is always dispatchable. Running and claimed need the force toggle. */
@@ -48,10 +55,27 @@ function canDispatch(ticket: Ticket, force: boolean): boolean {
   return force;
 }
 
+/**
+ * Raw GitHub labels past this many collapse into a count.
+ *
+ * They are the least decisive thing on the card and the only part with no
+ * bound, so left alone they wrap the chip row to three lines and bury the
+ * title. The count keeps the row honest that more exist.
+ */
+const LABEL_CAP = 3;
+
+/**
+ * One ticket on the board.
+ *
+ * The card answers, top to bottom, the four things the reader decides on: can I
+ * take this (state, parked in a fixed right-hand column so it scans down the
+ * list), what is it (the number column and the title), what is it made of (kind
+ * and labels), and what happens if I dispatch it (the run band below the
+ * hairline). Nothing wraps across those groups any more.
+ */
 function TicketRow({
   ticket,
   theme,
-  compact,
   selected,
   selectable,
   pending,
@@ -61,7 +85,6 @@ function TicketRow({
 }: {
   ticket: Ticket;
   theme: PluginTheme;
-  compact: boolean;
   selected: boolean;
   selectable: boolean;
   /** This ticket is part of the dispatch currently in flight. */
@@ -72,12 +95,15 @@ function TicketRow({
   onToggle: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
+  const look = useAppearance();
   const fade = useRef(new Animated.Value(1)).current;
 
   const kind = TICKET_KINDS[ticket.kind];
   const state = statePresentation(ticket.state, theme);
   const facts = factsFor(ticket, force);
   const labels = ticket.labels.filter((label) => label !== readyLabel).map(shortLabel);
+  const shownLabels = labels.slice(0, LABEL_CAP);
+  const hiddenLabels = labels.length - shownLabels.length;
 
   useEffect(() => {
     Animated.timing(fade, {
@@ -87,6 +113,12 @@ function TicketRow({
       useNativeDriver: true,
     }).start();
   }, [fade, pending]);
+
+  const wash = selected
+    ? withAlpha(theme.colors.accent, 0.1)
+    : hovered && selectable
+      ? withAlpha(theme.colors.foreground, 0.04)
+      : "transparent";
 
   return (
     <Animated.View style={{ opacity: fade }}>
@@ -98,110 +130,81 @@ function TicketRow({
         onPress={onToggle}
         onHoverIn={() => setHovered(true)}
         onHoverOut={() => setHovered(false)}
-        style={({ pressed }) => ({
-          borderRadius: 12,
-          borderWidth: 1,
-          borderColor: selected ? theme.colors.accent : theme.colors.border,
-          backgroundColor: theme.colors.surface1,
-          opacity: pressed ? 0.9 : 1,
-        })}
+        style={({ pressed }) => ({ opacity: pressed ? 0.9 : 1 })}
       >
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "flex-start",
-            gap: 12,
-            padding: compact ? 12 : 14,
-            borderRadius: 11,
-            backgroundColor: selected
-              ? withAlpha(theme.colors.accent, 0.1)
-              : hovered && selectable
-                ? withAlpha(theme.colors.foreground, 0.04)
-                : "transparent",
-          }}
+        <TicketFrame
+          theme={theme}
+          selected={selected}
+          tone={ticket.state === "blocked" ? "danger" : "default"}
         >
-          {/*
-            An inert row says why it is inert. Dimming the whole card used to
-            carry that, at the cost of every line's contrast.
-          */}
-          <View style={{ width: 18, alignItems: "center", marginTop: 2 }}>
-            {selectable ? (
-              <Checkbox checked={selected} theme={theme} />
-            ) : ticket.state === "blocked" ? (
-              <Icon name="Ban" size={16} color={theme.colors.statusDanger} />
-            ) : (
-              <Icon name="Lock" size={15} color={theme.colors.foregroundMuted} />
-            )}
-          </View>
+          <View style={{ backgroundColor: wash }}>
+            <TicketBody style={{ flexDirection: "row", gap: 12 }}>
+              {/*
+                An inert row says why it is inert. Dimming the whole card used
+                to carry that, at the cost of every line's contrast.
+              */}
+              <TicketMark>
+                {selectable ? (
+                  <Checkbox checked={selected} theme={theme} />
+                ) : ticket.state === "blocked" ? (
+                  <Icon name="Ban" size={look.space.mark - 2} color={theme.colors.statusDanger} />
+                ) : (
+                  <Icon
+                    name="Lock"
+                    size={look.space.mark - 3}
+                    color={theme.colors.foregroundMuted}
+                  />
+                )}
+              </TicketMark>
 
-          <View style={{ flex: 1, gap: 6 }}>
-            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
-              <Text
-                style={{
-                  color: theme.colors.foregroundMuted,
-                  fontFamily: MONO,
-                  fontSize: TYPE.meta,
-                  fontVariant: ["tabular-nums"],
-                }}
-              >
-                #{ticket.number}
-              </Text>
-              <Text
-                style={{ color: theme.colors.foreground, fontSize: TYPE.row, lineHeight: 20, flex: 1 }}
-              >
-                {ticket.title}
-              </Text>
-            </View>
+              <View style={{ flex: 1, gap: look.space.innerGap }}>
+                <TicketHead
+                  theme={theme}
+                  number={ticket.number}
+                  title={ticket.title}
+                  trailing={
+                    <StateBadge label={state.label} color={state.color} hollow={state.hollow} />
+                  }
+                />
 
-            <View
-              style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }}
-            >
-              <Chip
-                text={kind.title}
-                icon={KIND_ICON[ticket.kind]}
-                tint={theme.colors.accent}
-                theme={theme}
-              />
-              <StateBadge label={state.label} color={state.color} hollow={state.hollow} />
-              {labels.map((label) => (
-                <Chip key={label} text={label} theme={theme} />
-              ))}
-            </View>
-
-            {ticket.spec ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-                <Icon name="CornerDownRight" size={12} color={theme.colors.foregroundMuted} />
-                <Text
-                  numberOfLines={1}
-                  style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.meta, flex: 1 }}
+                <View
+                  style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}
                 >
-                  Under #{ticket.spec.number} {ticket.spec.title}
-                </Text>
+                  <Chip
+                    text={kind.title}
+                    icon={KIND_ICON[ticket.kind]}
+                    tint={theme.colors.accent}
+                    theme={theme}
+                  />
+                  {shownLabels.map((label) => (
+                    <Chip key={label} text={label} theme={theme} />
+                  ))}
+                  {hiddenLabels > 0 ? (
+                    <Chip text={`+${hiddenLabels}`} theme={theme} />
+                  ) : null}
+                </View>
+
+                {ticket.spec ? (
+                  <TicketNote
+                    icon="CornerDownRight"
+                    color={theme.colors.foregroundMuted}
+                    text={`Under #${ticket.spec.number} ${ticket.spec.title}`}
+                  />
+                ) : null}
+
+                {facts.map((fact) => (
+                  <TicketNote
+                    key={fact.text}
+                    color={factColor(fact.tone, theme)}
+                    text={fact.text}
+                  />
+                ))}
               </View>
-            ) : null}
+            </TicketBody>
 
-            {facts.map((fact) => (
-              <Text
-                key={fact.text}
-                style={{ color: factColor(fact.tone, theme), fontSize: TYPE.meta, lineHeight: 17 }}
-              >
-                {fact.text}
-              </Text>
-            ))}
-
-            <Text
-              numberOfLines={1}
-              style={{
-                color: theme.colors.foregroundMuted,
-                fontFamily: MONO,
-                fontSize: TYPE.label,
-                marginTop: 1,
-              }}
-            >
-              /skill:{kind.skill} → {ticket.branch}
-            </Text>
+            <RunBand theme={theme} skill={kind.skill} branch={ticket.branch} />
           </View>
-        </View>
+        </TicketFrame>
       </Pressable>
     </Animated.View>
   );
@@ -227,8 +230,18 @@ export interface BoardProps {
 export function Board({ theme, layout, navigation, repoDir, header }: BoardProps) {
   const paseo = usePaseo();
   const settings = useBoardSettings();
-  const { readyLabel, deferredLabel } = settings;
+  const { readyLabel, deferredLabel, fontFamily, fontSize, cardDensity } = settings;
   const toast = useToast();
+
+  /**
+   * Settings are a live subscription, so saving the Appearance group lands here
+   * as a new token object on the next render and every card below redraws. No
+   * cache to invalidate, no refetch, no reload: the ticket data never moved.
+   */
+  const look = useMemo(
+    () => buildAppearance({ fontFamily, fontSize, cardDensity }, layout.compact),
+    [fontFamily, fontSize, cardDensity, layout.compact],
+  );
   const queryClient = useQueryClient();
   const read = useRpc(listTickets);
   const plan = useRpc(planDispatch);
@@ -360,7 +373,7 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
     [selected, tickets, force],
   );
 
-  const padding = layout.compact ? 16 : 24;
+  const padding = look.space.screenPad;
   const busy = dispatch.isPending;
   const readyCount = tickets.filter((ticket) => ticket.state === "ready").length;
 
@@ -393,6 +406,7 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
     .join(" · ");
 
   return (
+   <AppearanceContext.Provider value={look}>
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
       <ScrollView contentContainerStyle={{ padding, paddingBottom: padding * 1.5, gap: 16 }}>
         <View
@@ -405,12 +419,24 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
         >
           <View style={{ gap: 3, flexShrink: 1 }}>
             <Text
-              style={{ color: theme.colors.foreground, fontSize: layout.compact ? 18 : 20 }}
+              style={{
+                color: theme.colors.foreground,
+                fontFamily: look.text,
+                fontSize: layout.compact ? look.type.title - 2 : look.type.title,
+                lineHeight: look.line.title,
+              }}
             >
               {headline}
             </Text>
             {summary ? (
-              <Text style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.meta }}>
+              <Text
+                style={{
+                  color: theme.colors.foregroundMuted,
+                  fontFamily: look.text,
+                  fontSize: look.type.meta,
+                  lineHeight: look.line.meta,
+                }}
+              >
                 {summary}
               </Text>
             ) : null}
@@ -516,13 +542,12 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
         ) : null}
 
         {visible.length > 0 ? (
-          <View style={{ gap: layout.compact ? 8 : 10 }}>
+          <View style={{ gap: look.space.cardGap }}>
             {visible.map((ticket) => (
               <TicketRow
                 key={ticket.number}
                 ticket={ticket}
                 theme={theme}
-                compact={layout.compact}
                 force={force}
                 readyLabel={readyLabel}
                 selected={selected.includes(ticket.number)}
@@ -555,7 +580,13 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
                 size={13}
                 color={theme.colors.foregroundMuted}
               />
-              <Text style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.meta }}>
+              <Text
+                style={{
+                  color: theme.colors.foregroundMuted,
+                  fontFamily: look.text,
+                  fontSize: look.type.meta,
+                }}
+              >
                 Skipped {board.data.skipped.length}
               </Text>
             </Pressable>
@@ -566,8 +597,10 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
                     key={line}
                     style={{
                       color: theme.colors.foregroundMuted,
-                      fontSize: TYPE.label,
-                      lineHeight: 16,
+                      // Each line is `#12 title — reason`, quoted from the picker.
+                      fontFamily: look.mono,
+                      fontSize: look.type.label,
+                      lineHeight: look.line.label,
                       paddingLeft: 18,
                     }}
                   >
@@ -580,7 +613,12 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
 
         {hasRepo ? (
           <Text
-            style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.label, lineHeight: 16 }}
+            style={{
+              color: theme.colors.foregroundMuted,
+              fontFamily: look.mono,
+              fontSize: look.type.label,
+              lineHeight: look.line.label,
+            }}
           >
             {settings.agentProvider} · thinking {settings.agentThinking}
             {board.data ? ` · updated ${clockTime(board.data.fetchedAt)}` : ""}
@@ -603,7 +641,13 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
       >
         <Text
           numberOfLines={2}
-          style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.meta, flex: 1 }}
+          style={{
+            color: theme.colors.foregroundMuted,
+            fontFamily: look.text,
+            fontSize: look.type.meta,
+            lineHeight: look.line.meta,
+            flex: 1,
+          }}
         >
           {selected.length === 0 ? "Pick tickets to dispatch" : `${dispatchable.length} selected`}
           {held > 0 ? (
@@ -636,5 +680,6 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
         />
       </View>
     </View>
+   </AppearanceContext.Provider>
   );
 }

@@ -154,7 +154,7 @@ shortcut alone.
 | -------------------------- | ------- | ------------------------------------------------------------------ |
 | `index.client.tsx`         | client  | Surface, sidebar item, panel, and Command Center wiring            |
 | `index.server.ts`          | daemon  | RPC handler and lifecycle hook wiring                              |
-| `shared/settings.ts`       | both    | Settings document, its defaults, and the label vocabulary sent to the daemon |
+| `shared/settings.ts`       | both    | Settings document, its defaults, the label vocabulary sent to the daemon, and the appearance choices that stay client-side |
 | `shared/tickets.ts`        | both    | Zod RPC contracts, fixed labels, kind detection, prompts, the claim marker, the card contract |
 | `server/tickets.ts`        | daemon  | Every `gh` and `git` call, the ready rules, the claim and its release, the board cache |
 | `client/board.tsx`         | client  | The board: list, kind filter, multi-select, force, refresh, dispatch |
@@ -163,11 +163,11 @@ shortcut alone.
 | `client/dispatch.ts`       | client  | Workspace and agent creation through the Paseo SDK                  |
 | `client/ticket-card.tsx`   | client  | The card pinned to a dispatched agent's timeline                    |
 | `client/web.ts`            | client  | The one module allowed a browser global, for opening a link         |
-| `client/settings.ts`       | client  | Reads the settings document, falling back to the defaults           |
+| `client/settings.ts`       | client  | Reads the settings document, falling back to the defaults, and builds the live appearance tokens |
 | `client/providers.ts`      | client  | Provider, model, and thinking dropdown options from the daemon      |
 | `client/settings-screen.tsx` | client | The settings screen: one draft, saved as a whole document          |
-| `client/theme.ts`          | client  | Type scale, ticket color mapping, alpha helper                     |
-| `client/ui.tsx`            | client  | Shared presentational pieces: segments, chips, buttons             |
+| `client/theme.ts`          | client  | Appearance tokens and their context, ticket color mapping, alpha helper |
+| `client/ui.tsx`            | client  | Shared presentational pieces: the ticket frame, head, note, and run band, plus segments, chips, buttons |
 
 No `gh` call and no credential handling exists in the client bundle. The panel only ever sends a
 repository path and a list of issue numbers.
@@ -196,6 +196,22 @@ board used to hardcode, so a fresh install behaves as before.
 | Ready label           | `ready-for-agent`              | Another repo's triage vocabulary                                 |
 | Deferred label        | `deferred`                     | Same                                                             |
 | Worktrees in parallel | 3                              | The worktree adds all touch one repository index                 |
+| Font                  | System                         | System, sans-serif, serif, or monospace                          |
+| Text size             | Medium                         | Scales the whole board, small through extra large                |
+| Card density          | Cozy                           | Tight, cozy, or roomy padding and gaps                           |
+
+The three Appearance settings are the only ones the daemon never sees: the server picks tickets, it
+does not draw them. `client/theme.ts` turns those three words into every size, face, and gap through
+`buildAppearance`, and hands the result down on `AppearanceContext`. Because `useSettings` is a live
+subscription, saving redraws the board, the sidebar surface, and the ticket card on a running
+agent's timeline on the next render: no refetch, no remount, no reload. The settings screen previews
+a real ticket card built from the same components, following the draft rather than the saved
+document, so the choice is judged before it is committed.
+
+At their defaults the tokens reproduce the sizes and spacing the board hardcoded before the group
+existed, down to the 20px title line height and the 18px checkbox. The text face never touches issue
+numbers, branch names, or skill commands, which stay monospaced as literal data, unless the reader
+picks Monospace and unifies the two.
 
 Provider, model, and thinking level are dropdowns filled from the daemon's own provider catalog:
 providers from `providers.waitForReady()`, models and their thinking options from

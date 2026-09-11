@@ -3,8 +3,16 @@ import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { TICKET_KINDS, type TicketCard as TicketCardData } from "../shared/tickets";
-import { KIND_ICON, MONO, TYPE, withAlpha } from "./theme";
-import { Chip } from "./ui";
+import { useBoardAppearance } from "./settings";
+import { AppearanceContext, KIND_ICON, useAppearance, withAlpha } from "./theme";
+import {
+  Chip,
+  RunBand,
+  TicketBody,
+  TicketFrame,
+  TicketHead,
+  TicketNote,
+} from "./ui";
 import { openExternal } from "./web";
 
 /**
@@ -15,8 +23,10 @@ import { openExternal } from "./web";
  * which ticket the tab was for. This card does, and it is the only row on the
  * timeline that links back out to GitHub.
  *
- * It is deliberately quiet. It sits above a wall of text, so it earns its place
- * with structure rather than with color.
+ * It is built from the same frame, head, and run band as the board row, so the
+ * ticket you picked and the ticket now running read as one object rather than
+ * two designs of the same fact. It is deliberately quiet: it sits above a wall
+ * of text, so it earns its place with structure rather than with color.
  */
 
 /** A row of text that opens a URL, underlined on hover the way a link should be. */
@@ -34,6 +44,7 @@ function LinkRow({
   mono?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
+  const look = useAppearance();
   const toast = useToast();
 
   return (
@@ -53,18 +64,18 @@ function LinkRow({
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
-        minHeight: 22,
+        minHeight: Math.max(22, look.line.meta),
         opacity: pressed ? 0.7 : 1,
       })}
     >
-      <Icon name={icon} size={12} color={color} />
+      <Icon name={icon} size={Math.round(look.type.meta)} color={color} />
       <Text
         numberOfLines={1}
         style={{
           color,
           flexShrink: 1,
-          fontFamily: mono ? MONO : undefined,
-          fontSize: TYPE.meta,
+          fontFamily: mono ? look.mono : look.text,
+          fontSize: look.type.meta,
           textDecorationLine: hovered ? "underline" : "none",
         }}
       >
@@ -74,95 +85,40 @@ function LinkRow({
   );
 }
 
-export function TicketCard({ item, theme, layout }: PluginTimelineItemProps<TicketCardData>) {
+function TicketCardFace({ item, theme }: PluginTimelineItemProps<TicketCardData>) {
   const card = item.data;
   const kind = TICKET_KINDS[card.kind];
+  const look = useAppearance();
   const accent = theme.colors.accent;
+  const blocked = card.blockers.length > 0;
 
   return (
-    <View
-      style={{
-        gap: 8,
-        padding: layout.compact ? 12 : 14,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-        backgroundColor: theme.colors.surface1,
-        // A left rule in the accent, so the card reads as the board's row even
-        // once the skill text below it has pushed the board out of mind.
-        borderLeftWidth: 3,
-        borderLeftColor: accent,
-      }}
-    >
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-        <View style={{ paddingTop: 2 }}>
-          <Icon name={KIND_ICON[card.kind]} size={15} color={accent} />
+    <TicketFrame theme={theme} tone={blocked ? "danger" : "default"}>
+      <TicketBody>
+        <TicketHead theme={theme} number={card.number} title={card.title} />
+
+        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+          <Chip text={kind.title} icon={KIND_ICON[card.kind]} tint={accent} theme={theme} />
         </View>
 
-        <View style={{ flex: 1, gap: 2 }}>
-          <Text
+        {blocked ? (
+          // A column, so the note's text stretches to the box instead of
+          // collapsing to its own content width inside a row.
+          <View
             style={{
-              color: theme.colors.foregroundMuted,
-              fontFamily: MONO,
-              fontSize: TYPE.label,
-              fontVariant: ["tabular-nums"],
+              padding: 8,
+              borderRadius: look.radius.chip,
+              backgroundColor: withAlpha(theme.colors.statusDanger, 0.12),
             }}
           >
-            #{card.number}
-          </Text>
-          <Text style={{ color: theme.colors.foreground, fontSize: TYPE.row, lineHeight: 20 }}>
-            {card.title}
-          </Text>
-        </View>
-      </View>
-
-      <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <Chip text={kind.title} icon={KIND_ICON[card.kind]} tint={accent} theme={theme} />
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 5, flexShrink: 1 }}>
-          <Icon name="GitBranch" size={11} color={theme.colors.foregroundMuted} />
-          <Text
-            numberOfLines={1}
-            style={{
-              color: theme.colors.foregroundMuted,
-              fontFamily: MONO,
-              fontSize: TYPE.label,
-              flexShrink: 1,
-            }}
-          >
-            {card.branch}
-          </Text>
-        </View>
-      </View>
-
-      {card.blockers.length > 0 ? (
-        <View
-          style={{
-            flexDirection: "row",
-            gap: 7,
-            padding: 8,
-            borderRadius: 8,
-            backgroundColor: withAlpha(theme.colors.statusDanger, 0.12),
-          }}
-        >
-          <View style={{ paddingTop: 1 }}>
-            <Icon name="Ban" size={12} color={theme.colors.statusDanger} />
+            <TicketNote
+              icon="Ban"
+              color={theme.colors.statusDanger}
+              text={`Blocked by ${card.blockers.join(", ")}`}
+            />
           </View>
-          <Text
-            style={{ color: theme.colors.statusDanger, fontSize: TYPE.meta, lineHeight: 17, flex: 1 }}
-          >
-            Blocked by {card.blockers.join(", ")}
-          </Text>
-        </View>
-      ) : null}
+        ) : null}
 
-      <View style={{ gap: 2 }}>
-        <LinkRow
-          url={card.url}
-          label={card.url.replace(/^https?:\/\/(www\.)?/, "")}
-          icon="ExternalLink"
-          color={accent}
-          mono
-        />
         {card.spec ? (
           <LinkRow
             url={card.spec.url}
@@ -171,7 +127,29 @@ export function TicketCard({ item, theme, layout }: PluginTimelineItemProps<Tick
             color={theme.colors.foregroundMuted}
           />
         ) : null}
-      </View>
-    </View>
+
+        <LinkRow
+          url={card.url}
+          label={card.url.replace(/^https?:\/\/(www\.)?/, "")}
+          icon="ExternalLink"
+          color={accent}
+          mono
+        />
+      </TicketBody>
+
+      <RunBand theme={theme} skill={kind.skill} branch={card.branch} />
+    </TicketFrame>
+  );
+}
+
+export function TicketCard(props: PluginTimelineItemProps<TicketCardData>) {
+  // The timeline renders outside the board's tree, so this card provides its
+  // own appearance. Same settings document, same live subscription: changing
+  // the font in settings redraws a running agent's ticket row too.
+  const look = useBoardAppearance(props.layout.compact);
+  return (
+    <AppearanceContext.Provider value={look}>
+      <TicketCardFace {...props} />
+    </AppearanceContext.Provider>
   );
 }

@@ -2,12 +2,17 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Animated, Easing, Pressable, Text, View, type ViewStyle } from "react-native";
-import { TYPE, withAlpha } from "./theme";
+import { useAppearance, withAlpha } from "./theme";
 
 /**
  * One control vocabulary for the board, matching `paseo-worktree-janitor` so a
  * reader moving between the two Paseo surfaces meets the same buttons, chips,
  * segments, and empty states.
+ *
+ * Every size here comes off the appearance context rather than a constant, so
+ * the font and density chosen in settings reach the controls as well as the
+ * ticket text. Nothing takes an appearance prop: the context default is the
+ * shipped look, so a control rendered anywhere still draws correctly.
  */
 
 /** `warning` is reserved for Force, the one switch that overrides a safety check. */
@@ -48,6 +53,7 @@ export function Button({
   selected = false,
 }: ButtonProps) {
   const [hovered, setHovered] = useState(false);
+  const look = useAppearance();
   const inert = disabled || busy;
 
   const palette = (() => {
@@ -116,7 +122,10 @@ export function Button({
         <Icon name={icon} size={14} color={palette.foreground} />
       ) : null}
       {hideLabel ? null : (
-        <Text style={{ color: palette.foreground, fontSize: TYPE.body }} numberOfLines={1}>
+        <Text
+          style={{ color: palette.foreground, fontFamily: look.text, fontSize: look.type.body }}
+          numberOfLines={1}
+        >
           {busy ? (busyLabel ?? label) : label}
         </Text>
       )}
@@ -163,12 +172,14 @@ export function Spinner({ color, size = 14 }: { color: string; size?: number }) 
 
 /** Filled while something is driving the ticket, hollow when nothing is. */
 export function StateDot({ color, hollow }: { color: string; hollow: boolean }) {
+  const look = useAppearance();
+  const size = Math.round(look.type.label * 0.64);
   return (
     <View
       style={{
-        width: 7,
-        height: 7,
-        borderRadius: 3.5,
+        width: size,
+        height: size,
+        borderRadius: size / 2,
         borderWidth: hollow ? 1.5 : 0,
         borderColor: color,
         backgroundColor: hollow ? "transparent" : color,
@@ -186,10 +197,11 @@ export function StateBadge({
   color: string;
   hollow: boolean;
 }) {
+  const look = useAppearance();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
       <StateDot color={color} hollow={hollow} />
-      <Text style={{ color, fontSize: TYPE.label }}>{label}</Text>
+      <Text style={{ color, fontFamily: look.text, fontSize: look.type.label }}>{label}</Text>
     </View>
   );
 }
@@ -206,6 +218,7 @@ export function Chip({
   tint?: string;
   icon?: string;
 }) {
+  const look = useAppearance();
   const color = tint ?? theme.colors.foregroundMuted;
   return (
     <View
@@ -216,14 +229,17 @@ export function Chip({
         paddingLeft: icon ? 6 : 7,
         paddingRight: 7,
         paddingVertical: 3,
-        borderRadius: 6,
+        borderRadius: look.radius.chip,
         maxWidth: 220,
         flexShrink: 1,
         backgroundColor: withAlpha(tint ?? theme.colors.foreground, tint ? 0.14 : 0.07),
       }}
     >
-      {icon ? <Icon name={icon} size={11} color={color} /> : null}
-      <Text style={{ color, fontSize: TYPE.label, flexShrink: 1 }} numberOfLines={1}>
+      {icon ? <Icon name={icon} size={Math.round(look.type.label)} color={color} /> : null}
+      <Text
+        style={{ color, fontFamily: look.text, fontSize: look.type.label, flexShrink: 1 }}
+        numberOfLines={1}
+      >
         {text}
       </Text>
     </View>
@@ -236,6 +252,8 @@ export function Chip({
  */
 export function Checkbox({ checked, theme }: { checked: boolean; theme: PluginTheme }) {
   const mark = useRef(new Animated.Value(checked ? 1 : 0)).current;
+  const look = useAppearance();
+  const size = look.space.mark;
 
   useEffect(() => {
     Animated.timing(mark, {
@@ -249,9 +267,9 @@ export function Checkbox({ checked, theme }: { checked: boolean; theme: PluginTh
   return (
     <View
       style={{
-        width: 18,
-        height: 18,
-        borderRadius: 5,
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.28),
         borderWidth: 1,
         alignItems: "center",
         justifyContent: "center",
@@ -267,7 +285,7 @@ export function Checkbox({ checked, theme }: { checked: boolean; theme: PluginTh
           ],
         }}
       >
-        <Icon name="Check" size={12} color={theme.colors.accentForeground} />
+        <Icon name="Check" size={Math.round(size * 0.67)} color={theme.colors.accentForeground} />
       </Animated.View>
     </View>
   );
@@ -286,6 +304,7 @@ interface SegmentProps {
 /** Counts double as the filter, so the surface has no decorative metric row. */
 export function Segment({ label, count, active, onPress, theme, icon, accent }: SegmentProps) {
   const [hovered, setHovered] = useState(false);
+  const look = useAppearance();
   const tint = accent ?? theme.colors.foreground;
 
   return (
@@ -314,14 +333,15 @@ export function Segment({ label, count, active, onPress, theme, icon, accent }: 
       {icon ? (
         <Icon
           name={icon}
-          size={12}
+          size={Math.round(look.type.meta)}
           color={active ? tint : theme.colors.foregroundMuted}
         />
       ) : null}
       <Text
         style={{
           color: active ? theme.colors.foreground : theme.colors.foregroundMuted,
-          fontSize: TYPE.meta,
+          fontFamily: look.text,
+          fontSize: look.type.meta,
         }}
         numberOfLines={1}
       >
@@ -331,7 +351,10 @@ export function Segment({ label, count, active, onPress, theme, icon, accent }: 
         <Text
           style={{
             color: active ? tint : theme.colors.foregroundMuted,
-            fontSize: TYPE.meta,
+            // Counts stay on the data face so they hold a column while a filter
+            // moves between them, even when the text face is a serif.
+            fontFamily: look.mono,
+            fontSize: look.type.label,
             fontVariant: ["tabular-nums"],
           }}
         >
@@ -386,6 +409,7 @@ export function Callout({
   title: string;
   detail?: string | null;
 }) {
+  const look = useAppearance();
   const color = tone === "danger" ? theme.colors.statusDanger : theme.colors.statusWarning;
   return (
     <View
@@ -401,10 +425,25 @@ export function Callout({
         <Icon name={tone === "danger" ? "CircleX" : "TriangleAlert"} size={15} color={color} />
       </View>
       <View style={{ flex: 1, gap: 3 }}>
-        <Text style={{ color, fontSize: TYPE.body, lineHeight: 18 }}>{title}</Text>
+        <Text
+          style={{
+            color,
+            fontFamily: look.text,
+            fontSize: look.type.body,
+            lineHeight: look.line.body,
+          }}
+        >
+          {title}
+        </Text>
         {detail ? (
           <Text
-            style={{ color: theme.colors.foregroundMuted, fontSize: TYPE.meta, lineHeight: 17 }}
+            style={{
+              color: theme.colors.foregroundMuted,
+              // Daemon and git errors are quoted output, so they read as output.
+              fontFamily: look.mono,
+              fontSize: look.type.label,
+              lineHeight: look.line.meta,
+            }}
           >
             {detail}
           </Text>
@@ -427,17 +466,24 @@ export function EmptyState({
   detail: string;
   action?: { label: string; onPress: () => void };
 }) {
+  const look = useAppearance();
   return (
     <View style={{ alignItems: "center", gap: 8, paddingVertical: 44, paddingHorizontal: 24 }}>
       <Icon name={icon} size={22} color={theme.colors.foregroundMuted} />
-      <Text style={{ color: theme.colors.foreground, fontSize: TYPE.row }}>{title}</Text>
+      <Text
+        style={{ color: theme.colors.foreground, fontFamily: look.text, fontSize: look.type.row }}
+      >
+        {title}
+      </Text>
       <Text
         style={{
           color: theme.colors.foregroundMuted,
-          fontSize: TYPE.meta,
-          lineHeight: 18,
+          fontFamily: look.text,
+          fontSize: look.type.meta,
+          lineHeight: look.line.meta,
           textAlign: "center",
-          maxWidth: 340,
+          // Holds the reading measure however large the reader set the text.
+          maxWidth: look.type.meta * 28,
         }}
       >
         {detail}
@@ -451,8 +497,285 @@ export function EmptyState({
   );
 }
 
-/** Holds the list's shape while the first read is in flight, so nothing jumps. */
+// --- the ticket object --------------------------------------------------------
+
+/**
+ * One ticket, drawn the same way wherever it appears: on the board, at the top
+ * of a dispatched agent's timeline, and in the settings preview.
+ *
+ * The shape is two parts. Above, what the ticket *is*: number, title, state,
+ * kind, and whatever is standing in its way. Below, behind a hairline, what
+ * dispatching it *does*: the skill command and the branch it cuts. That split
+ * is the decision the reader is actually making, so the card is built around it
+ * instead of stacking six equal lines.
+ */
+
+export type TicketTone = "default" | "danger";
+
+/** The card's outline. Selection and a blocker are the only things that move it. */
+export function TicketFrame({
+  theme,
+  selected = false,
+  tone = "default",
+  children,
+  style,
+}: {
+  theme: PluginTheme;
+  selected?: boolean;
+  tone?: TicketTone;
+  children: ReactNode;
+  style?: ViewStyle;
+}) {
+  const look = useAppearance();
+  const border = selected
+    ? theme.colors.accent
+    : tone === "danger"
+      ? withAlpha(theme.colors.statusDanger, 0.4)
+      : theme.colors.border;
+
+  return (
+    <View
+      style={[
+        {
+          borderRadius: look.radius.card,
+          borderWidth: 1,
+          borderColor: border,
+          backgroundColor: theme.colors.surface1,
+          // Lets the run band bleed to the edges and still take the corners.
+          overflow: "hidden",
+        },
+        style,
+      ]}
+    >
+      {children}
+    </View>
+  );
+}
+
+/**
+ * The leading slot: the select mark, or the icon saying why this ticket cannot
+ * be selected.
+ *
+ * `alignSelf: "flex-start"` is the whole point. The body is a flex row, so a
+ * stretched slot grows with the card as it gains a spec line, facts, and a
+ * blocker, and anything centered inside it drifts down until it sits beside a
+ * fact instead of the title it belongs to. Opting out of the stretch pins the
+ * slot to the top, and centering within one line box keeps the mark optically
+ * level with the title at every type scale rather than a fixed nudge that only
+ * looks right at one size.
+ */
+export function TicketMark({ children }: { children: ReactNode }) {
+  const look = useAppearance();
+  return (
+    <View
+      style={{
+        width: look.space.mark,
+        minHeight: look.line.row,
+        alignSelf: "flex-start",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {children}
+    </View>
+  );
+}
+
+/** Everything above the hairline. Density owns its padding and its line gaps. */
+export function TicketBody({ children, style }: { children: ReactNode; style?: ViewStyle }) {
+  const look = useAppearance();
+  return (
+    <View style={[{ padding: look.space.cardPad, gap: look.space.innerGap }, style]}>
+      {children}
+    </View>
+  );
+}
+
+/**
+ * The board's spine.
+ *
+ * Fixed width, tabular, right-aligned: the digits line up down the whole list
+ * and every title starts at the same x, however many digits the repository has
+ * reached. It keeps the data face even when the reader picks a serif, because a
+ * proportional serif renders these as prose rather than as a column.
+ */
+export function TicketNumber({ theme, number }: { theme: PluginTheme; number: number }) {
+  const look = useAppearance();
+  return (
+    <Text
+      style={{
+        color: theme.colors.foregroundMuted,
+        fontFamily: look.mono,
+        fontSize: look.type.meta,
+        lineHeight: look.line.row,
+        minWidth: look.space.numberColumn,
+        textAlign: "right",
+        fontVariant: ["tabular-nums"],
+      }}
+    >
+      #{number}
+    </Text>
+  );
+}
+
+/**
+ * Number, title, and one trailing slot on a shared line box.
+ *
+ * The sizes differ, so the three are locked to an explicit line height rather
+ * than left to baseline alignment, which drifts once the reader scales the type
+ * or the trailing slot holds a view instead of a word.
+ */
+export function TicketHead({
+  theme,
+  number,
+  title,
+  trailing,
+}: {
+  theme: PluginTheme;
+  number: number;
+  title: string;
+  trailing?: ReactNode;
+}) {
+  const look = useAppearance();
+  return (
+    <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+      <TicketNumber theme={theme} number={number} />
+      <Text
+        style={{
+          color: theme.colors.foreground,
+          fontFamily: look.text,
+          fontSize: look.type.row,
+          lineHeight: look.line.row,
+          flex: 1,
+        }}
+      >
+        {title}
+      </Text>
+      {trailing ? (
+        <View style={{ minHeight: look.line.row, justifyContent: "center", flexShrink: 0 }}>
+          {trailing}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** A quiet supporting line under the title: the parent spec, or a fact. */
+export function TicketNote({
+  color,
+  icon,
+  text,
+}: {
+  color: string;
+  icon?: string;
+  text: string;
+}) {
+  const look = useAppearance();
+  return (
+    <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 5 }}>
+      {icon ? (
+        <View style={{ minHeight: look.line.meta, justifyContent: "center" }}>
+          <Icon name={icon} size={Math.round(look.type.meta)} color={color} />
+        </View>
+      ) : null}
+      <Text
+        numberOfLines={2}
+        style={{
+          color,
+          fontFamily: look.text,
+          fontSize: look.type.meta,
+          lineHeight: look.line.meta,
+          flex: 1,
+        }}
+      >
+        {text}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * What dispatching this ticket runs, along the card's bottom edge.
+ *
+ * Recessed and hairlined rather than boxed: it is a band cut into the card, not
+ * a second card inside it. Monospace here is the literal command and the
+ * literal branch name, not a technical costume.
+ */
+function BandShell({ theme, children }: { theme: PluginTheme; children: ReactNode }) {
+  const look = useAppearance();
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        paddingHorizontal: look.space.cardPad,
+        paddingVertical: look.space.bandPad,
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.border,
+        // Tinted from the foreground rather than set to a surface token, so the
+        // band reads as recessed on every theme the host ships.
+        backgroundColor: withAlpha(theme.colors.foreground, 0.035),
+      }}
+    >
+      {children}
+    </View>
+  );
+}
+
+export function RunBand({
+  theme,
+  skill,
+  branch,
+}: {
+  theme: PluginTheme;
+  skill: string;
+  branch: string;
+}) {
+  const look = useAppearance();
+  const glyph = Math.round(look.type.label);
+
+  return (
+    <BandShell theme={theme}>
+      <Icon name="Terminal" size={glyph} color={theme.colors.accent} />
+      <Text
+        style={{
+          color: theme.colors.accent,
+          fontFamily: look.mono,
+          fontSize: look.type.label,
+          lineHeight: look.line.label,
+        }}
+        numberOfLines={1}
+      >
+        /skill:{skill}
+      </Text>
+      <Icon name="ArrowRight" size={glyph} color={theme.colors.foregroundMuted} />
+      <Text
+        numberOfLines={1}
+        style={{
+          color: theme.colors.foregroundMuted,
+          fontFamily: look.mono,
+          fontSize: look.type.label,
+          lineHeight: look.line.label,
+          flexShrink: 1,
+        }}
+      >
+        {branch}
+      </Text>
+    </BandShell>
+  );
+}
+
+/**
+ * Holds the list's shape while the first read is in flight, so nothing jumps.
+ *
+ * Built from the same frame, mark, body, and band as a real ticket rather than
+ * a rectangle that resembles one. That is the only way the promise above stays
+ * true: when the card gained a run band, a hand-drawn skeleton would have kept
+ * its old height and every row would have grown the moment tickets landed.
+ */
 export function SkeletonRow({ theme, width }: { theme: PluginTheme; width: number }) {
+  const look = useAppearance();
   const block = (w: number | `${number}%`, h: number) => (
     <View
       style={{
@@ -463,24 +786,18 @@ export function SkeletonRow({ theme, width }: { theme: PluginTheme; width: numbe
       }}
     />
   );
+
   return (
-    <View
-      style={{
-        flexDirection: "row",
-        gap: 12,
-        padding: 14,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-        backgroundColor: theme.colors.surface1,
-      }}
-    >
-      <View style={{ paddingTop: 2 }}>{block(18, 18)}</View>
-      <View style={{ flex: 1, gap: 8 }}>
-        {block(`${width}%`, 12)}
-        {block(`${Math.max(28, width - 34)}%`, 10)}
-        {block(`${Math.max(34, width - 20)}%`, 9)}
-      </View>
-    </View>
+    <TicketFrame theme={theme}>
+      <TicketBody style={{ flexDirection: "row", gap: 12 }}>
+        <TicketMark>{block(look.space.mark, look.space.mark)}</TicketMark>
+        <View style={{ flex: 1, gap: look.space.innerGap }}>
+          {/* The title line and the chip row, at the heights those actually occupy. */}
+          {block(`${width}%`, look.line.row)}
+          {block(`${Math.max(28, width - 34)}%`, look.line.label + 6)}
+        </View>
+      </TicketBody>
+      <BandShell theme={theme}>{block(`${Math.max(34, width - 20)}%`, look.line.label)}</BandShell>
+    </TicketFrame>
   );
 }
