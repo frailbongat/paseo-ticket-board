@@ -3,7 +3,6 @@ import { BOARD_PANEL_ID, BoardPanel } from "./client/board-panel";
 import { BOARD_SURFACE_ID, BoardSurface } from "./client/board-surface";
 import { BOARD_SETTINGS_SCREEN_ID, BoardSettingsScreen } from "./client/settings-screen";
 import { TicketCard } from "./client/ticket-card";
-import { contributeTicketPills } from "./client/ticket-pill";
 import {
   TICKET_CARD_KIND,
   TICKET_CARD_VERSION,
@@ -75,11 +74,5 @@ export default function contribute(client: PluginClientContext) {
     },
   });
 
-  // Names the ticket on the agent running it, and hands it back. Imperative and
-  // agent-scoped, so unlike everything above it owns a subscription to tear down.
-  const removeTicketPills = contributeTicketPills(client);
-
-  return () => {
-    removeTicketPills();
-  };
+  return () => {};
 }

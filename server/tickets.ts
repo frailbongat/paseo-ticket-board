@@ -1138,22 +1138,6 @@ async function releaseAll(
 }
 
 /**
- * `owner/name` and the issue URL behind any path inside the checkout.
- *
- * Two local `git` reads on the usual path, so the composer pill can resolve a
- * URL on first press rather than holding one it never uses. `resolveRepoRoot`
- * walks a worktree up to its main checkout, which is what the agent's `cwd` is.
- */
-export async function resolveTicketHandler(input: {
-  repoDir: string;
-  number: number;
-}): Promise<{ repo: string; url: string }> {
-  const root = await resolveRepoRoot(input.repoDir);
-  const repo = await resolveRepo(root);
-  return { repo, url: `https://github.com/${repo}/issues/${input.number}` };
-}
-
-/**
  * A workspace archived without merging takes its worktree with it, so every
  * ticket dispatched into it goes back on the board.
  */

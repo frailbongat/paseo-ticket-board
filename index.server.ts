@@ -5,7 +5,6 @@ import {
   claimDispatchHandler,
   listTicketsHandler,
   planDispatchHandler,
-  resolveTicketHandler,
   workspaceArchivedHook,
 } from "./server/tickets";
 import { boardSettings } from "./shared/settings";
@@ -14,7 +13,6 @@ import {
   claimDispatch,
   listTickets,
   planDispatch,
-  resolveTicket,
 } from "./shared/tickets";
 
 export default function contribute(server: PluginServerContext) {
@@ -29,10 +27,6 @@ export default function contribute(server: PluginServerContext) {
   // Only a plugin session may write a timeline row, so the card is appended
   // here rather than by the client that just created the agent.
   server.handle(appendTicketCard, appendTicketCardHandler);
-
-  // Pressed from a dispatched agent's composer pill, which knows a ticket
-  // number and nothing else. Not reachable from the board.
-  server.handle(resolveTicket, resolveTicketHandler);
 
   // The claim has to be given back, or an archived workspace leaves its ticket
   // reading `claimed` until somebody forces it.

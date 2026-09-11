@@ -43,10 +43,8 @@ export const WAYFINDER_TYPE_LABELS = [
 export const AGENT_TICKET_LABEL = "ticket";
 
 /**
- * Agent label carrying the ticket's kind, stamped alongside the number.
- *
- * The composer pill needs both: a number alone cannot name the skill that took
- * the ticket, and a kind alone cannot say which ticket it is.
+ * Agent label carrying the ticket's kind, stamped alongside the number, so a
+ * ticket's runs stay findable by skill as well as by number.
  */
 export const AGENT_KIND_LABEL = "kind";
 
@@ -327,33 +325,6 @@ export const planDispatch = defineRpc({
   output: z.object({
     plans: z.array(DispatchPlanSchema),
     error: z.string().nullable(),
-  }),
-});
-
-// --- the composer pill --------------------------------------------------------
-
-/**
- * The issue URL behind a dispatched agent's labels.
- *
- * An agent carries a number and a kind, never a URL, so the only way back to
- * GitHub is to resolve the repository its worktree was cut from. Resolved on
- * press rather than at registration, so an agent nobody clicks costs nothing
- * and a screen full of dispatched agents costs nothing either.
- *
- * Throws instead of reporting an error, unlike `appendTicketCard`: somebody is
- * waiting on the press, and Paseo turns the rejection into a toast.
- */
-export const resolveTicket = defineRpc({
-  name: "ticket-board.ticket.resolve",
-  input: z.object({
-    /** Any path inside the repo. The agent's worktree does fine. */
-    repoDir: z.string(),
-    number: z.number().int().positive(),
-  }),
-  output: z.object({
-    /** `owner/name`. */
-    repo: z.string(),
-    url: z.string(),
   }),
 });
 
