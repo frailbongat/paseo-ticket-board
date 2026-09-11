@@ -23,7 +23,10 @@ export const DEFAULT_AGENT_PROVIDER = "pi/cliproxyapi/claude-opus-5";
 /** Provider reasoning level. */
 export const DEFAULT_AGENT_THINKING = "high";
 
-/** The label a ticket needs before the repo-wide pick will look at it. */
+/**
+ * Triage. Sorts a ticket to the top of the board rather than admitting it:
+ * every open issue is listed, because every ticket routes to some skill.
+ */
 export const DEFAULT_READY_LABEL = "ready-for-agent";
 
 /** Decided, not now. Never dispatched, whatever else the ticket carries. */

@@ -24,14 +24,14 @@ import {
   joinProviderRef,
   splitProviderRef,
 } from "../shared/settings";
-import { TICKET_KINDS } from "../shared/tickets";
+import { kindConfig } from "../shared/tickets";
 import {
   type ModelChoice,
   pickThinking,
   useProviderModels,
   useProviders,
 } from "./providers";
-import { AppearanceContext, KIND_ICON, TYPE, buildAppearance } from "./theme";
+import { AppearanceContext, TYPE, buildAppearance, kindIcon } from "./theme";
 import {
   Checkbox,
   Chip,
@@ -130,7 +130,7 @@ function AppearancePreview({
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                 <Chip
                   text="Wayfinder"
-                  icon={KIND_ICON.wayfinder}
+                  icon={kindIcon("wayfinder")}
                   tint={theme.colors.accent}
                   theme={theme}
                 />
@@ -140,7 +140,7 @@ function AppearancePreview({
           </TicketBody>
           <RunBand
             theme={theme}
-            skill={TICKET_KINDS.wayfinder.skill}
+            skill={kindConfig("wayfinder").skill}
             branch="112-hold-dock"
           />
         </TicketFrame>
@@ -360,7 +360,7 @@ function BoardSettingsForm({
         <SettingsCard>
           <SettingsInput
             label="Ready label"
-            hint="An open issue needs this label before the board will list it."
+            hint="Sorts an issue to the top of the board. Every open issue is listed either way."
             initialValue={draft.readyLabel}
             onChangeText={change("readyLabel")}
             disabled={settings.saving}

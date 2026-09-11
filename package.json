@@ -1,6 +1,6 @@
 {
   "name": "paseo-ticket-board",
-  "description": "Ticket board for Paseo: lists workable GitHub tickets, decides whether each is wayfinder, impeccable, or implement work, and dispatches it into its own worktree workspace with a pi agent already holding the matching skill command.",
+  "description": "Ticket board for Paseo: lists workable GitHub tickets, works out which installed skill each one was written for, and dispatches it into its own worktree workspace with a pi agent already holding the matching skill command.",
   "private": true,
   "version": "0.0.0",
   "scripts": {

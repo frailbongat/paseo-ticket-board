@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -13,9 +13,10 @@ import {
 } from "../shared/settings";
 import {
   AGENT_TICKET_LABEL,
+  DEFAULT_KIND,
   type DispatchPlan,
   IMPECCABLE_SPEC_LABEL,
-  KIND_ORDER,
+  KIND_PATTERN,
   type SpecRef,
   TICKET_CARD_ID,
   TICKET_CARD_KIND,
@@ -26,10 +27,13 @@ import {
   type TicketKind,
   type TicketState,
   WAYFINDER_MAP_LABEL,
-  WAYFINDER_TYPE_LABELS,
   detectKind,
-  isTakeable,
+  isTriaged,
+  kindRank,
+  kindsPresent,
   ownKind,
+  shapeProblem,
+  skillLabel,
   ticketPrompt,
 } from "../shared/tickets";
 
@@ -37,12 +41,17 @@ import {
  * Daemon side of the ticket board: every `gh` call, every `git` call, and the
  * auth check. None of this may move into the client bundle.
  *
- * A ticket is workable when it is open, not a spec, not deferred, past triage,
- * unassigned, free of open blockers, and has no work in flight. A spec is an
- * issue carrying `wayfinder:map` or `impeccable:spec`, or one that owns
- * sub-issues; specs are replaced by their open sub-issues and filtered like any
- * other candidate. A spec also hands its kind down, which is how a plain
- * `ready-for-agent` child of a wayfinder map still dispatches as wayfinder work.
+ * A ticket is workable when it is open, not a spec, not deferred, has a body,
+ * is not assigned to somebody else, and has no work in flight. There is no
+ * triage gate: every open issue is a candidate, because every ticket routes to
+ * some skill now. The ready label sorts a ticket up, it does not admit it.
+ *
+ * A spec is an issue carrying `wayfinder:map` or `impeccable:spec`, or one that
+ * owns sub-issues; specs are replaced by their open sub-issues and filtered
+ * like any other candidate. A spec also hands its kind down, which is how a
+ * plain child of a wayfinder map still dispatches as wayfinder work. A ticket
+ * that declares no kind at all is routed once, by `/skill:route`, and the
+ * answer is written back to the issue as a `skill:` label.
  *
  * Every GitHub fact the board needs arrives in one paginated GraphQL query:
  * labels, assignees, body, ancestry, sub-issue counts, and open blockers. The
@@ -62,16 +71,6 @@ const ISSUE_PAGE_SIZE = 100;
 const MAX_ISSUE_PAGES = 10;
 /** How far up the parent chain a ticket may inherit its kind and its spec. */
 const MAX_SPEC_DEPTH = 3;
-
-/** Every label that puts an issue, or anything under it, in scope. */
-function seedLabels(vocabulary: LabelVocabulary): readonly string[] {
-  return [
-    vocabulary.readyLabel,
-    WAYFINDER_MAP_LABEL,
-    IMPECCABLE_SPEC_LABEL,
-    ...WAYFINDER_TYPE_LABELS,
-  ];
-}
 
 /** The daemon inherits a launchd PATH that usually has no Homebrew in it. */
 const EXTRA_PATH = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
@@ -118,12 +117,17 @@ interface RunResult {
   code: number;
 }
 
-async function run(bin: string, args: string[], cwd: string): Promise<RunResult> {
+async function run(
+  bin: string,
+  args: string[],
+  cwd: string,
+  timeout = COMMAND_TIMEOUT_MS,
+): Promise<RunResult> {
   try {
     const { stdout, stderr } = await execFileAsync(bin, args, {
       cwd,
       env: commandEnv(),
-      timeout: COMMAND_TIMEOUT_MS,
+      timeout,
       maxBuffer: MAX_BUFFER,
     });
     return { stdout, stderr, code: 0 };
@@ -141,12 +145,108 @@ async function run(bin: string, args: string[], cwd: string): Promise<RunResult>
   }
 }
 
+/** How long a finished command gets to flush what is left in its pipes. */
+const DRAIN_MS = 750;
+
+/**
+ * Runs a command for one answer, and stops waiting the moment it has it.
+ *
+ * `run` cannot be used for pi. A `pi -p` turn prints its reply and then stays
+ * up: it leaves a detached executor holding the pipe, so stdout never reaches
+ * EOF, and the process itself does not return either. `execFile` resolves on
+ * EOF, so it would hang on every route until the timeout killed it, however
+ * quickly the router answered.
+ *
+ * So the answer ends the call rather than the process: `read` is tried against
+ * everything printed so far, and the first time it returns something, the child
+ * is killed and that something is the result. Exit and the timeout are the two
+ * ways out when it never answers.
+ *
+ * `run` stays as it is for `gh` and `git`, which exit properly and can return
+ * 30 MB of JSON that only EOF marks the end of.
+ */
+function runForAnswer<T>(
+  bin: string,
+  args: string[],
+  cwd: string,
+  signal: AbortSignal,
+  timeout: number,
+  read: (stdout: string) => T | null,
+): Promise<{ answer: T | null; detail: string }> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve({ answer: null, detail: "stopped" });
+      return;
+    }
+
+    // No stdin: a pi turn started with an open one waits for input that the
+    // daemon is never going to send.
+    const child = spawn(bin, args, {
+      cwd,
+      env: commandEnv(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const finish = (answer: T | null, note: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      // SIGKILL because the thing being stopped is a process that has already
+      // declined to end on its own.
+      child.kill("SIGKILL");
+      resolve({
+        answer,
+        detail: answer !== null ? "" : [note, stderr.trim(), stdout.trim()].find(Boolean) ?? note,
+      });
+    };
+
+    const timer = setTimeout(
+      () => finish(read(stdout), `no answer within ${Math.round(timeout / 1000)}s`),
+      timeout,
+    );
+
+    // The plugin is stopping, and a pi turn must not outlive it.
+    const onAbort = (): void => finish(null, "stopped");
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      if (stdout.length > MAX_BUFFER) return;
+      stdout += chunk;
+      const answer = read(stdout);
+      if (answer !== null) finish(answer, "");
+    });
+    child.stderr.on("data", (chunk: string) => {
+      if (stderr.length < MAX_BUFFER) stderr += chunk;
+    });
+
+    child.on("error", (error: Error) => finish(null, error.message));
+    // Only reached by a command that answered with nothing readable. The drain
+    // is there so a reply that landed in the same tick still counts.
+    child.on("exit", (code) => {
+      setTimeout(() => finish(read(stdout), `exit ${code ?? 1}`), DRAIN_MS);
+    });
+  });
+}
+
 function ghBinary(): string {
   return resolveBinary("gh", "Install it with `brew install gh`, then restart the Paseo daemon.");
 }
 
 function gitBinary(): string {
   return resolveBinary("git", "Install the Xcode command line tools, then restart the daemon.");
+}
+
+function piBinary(): string {
+  return resolveBinary("pi", "Install pi and put it on the PATH, then restart the Paseo daemon.");
 }
 
 /** The most useful line a failed command left behind. */
@@ -351,17 +451,13 @@ interface Candidate {
   inheritedKind: TicketKind | null;
   /** The spec that owns it, carried through so wayfinder can name the map. */
   spec: SpecRef | null;
-  /** A seed label on this issue or on an ancestor. Nothing else is the board's business. */
-  inScope: boolean;
+  /** Carries the ready label. Sorts the ticket up; never admits or excludes it. */
+  triaged: boolean;
 }
 
 /** A labelled spec is a spec whatever the sub-issue count says. */
 function isLabelledSpec(labels: readonly string[]): boolean {
   return labels.includes(WAYFINDER_MAP_LABEL) || labels.includes(IMPECCABLE_SPEC_LABEL);
-}
-
-function hasSeedLabel(labels: readonly string[], seeds: readonly string[]): boolean {
-  return labels.some((label) => seeds.includes(label));
 }
 
 /** Parent, grandparent, great-grandparent, whatever the query returned. */
@@ -378,7 +474,7 @@ function ancestry(issue: GqlIssue): Array<{ ref: SpecRef; labels: string[] }> {
   return chain;
 }
 
-function toCandidate(issue: GqlIssue, seeds: readonly string[]): Candidate {
+function toCandidate(issue: GqlIssue, readyLabel: string): Candidate {
   const labels = names(issue.labels);
   const chain = ancestry(issue);
 
@@ -408,8 +504,7 @@ function toCandidate(issue: GqlIssue, seeds: readonly string[]): Candidate {
     inheritedKind,
     // The immediate parent, matching how the old expansion walk assigned specs.
     spec: chain[0]?.ref ?? null,
-    inScope:
-      hasSeedLabel(labels, seeds) || chain.some((link) => hasSeedLabel(link.labels, seeds)),
+    triaged: isTriaged(labels, readyLabel),
   };
 }
 
@@ -584,21 +679,245 @@ async function resolveRepo(root: string): Promise<string> {
   return viaGh;
 }
 
-// --- selection ----------------------------------------------------------------
+// --- routing a ticket that names no skill -------------------------------------
 
 /**
- * Only Impeccable prescribes a body shape, because its own ticket writer
- * guarantees one. Wayfinder and implement tickets are prose specs, so the only
- * bar they clear is having a body at all.
+ * A ticket with no `skill:` label and no spec to inherit a kind from is asked
+ * once: `/skill:route` reads the issue and answers with the skill it should
+ * run. The answer is written straight back to the issue as `skill:<name>`, so
+ * the next draw reads a label instead of spawning pi again.
+ *
+ * That write-back is the whole cost control. Without it this would be a pi turn
+ * per unlabelled ticket per refresh.
  */
-function shapeProblem(kind: TicketKind, body: string): string | null {
-  if (kind === "impeccable") {
-    if (!/^## Agent prompt/m.test(body)) return "no '## Agent prompt' block";
-    if (!/^## Acceptance criteria/m.test(body)) return "no '## Acceptance criteria' block";
+
+/** A route is a whole pi turn: reading the issue, then the catalog. */
+const ROUTE_TIMEOUT_MS = 180_000;
+/** Each one is a model call against the same account. */
+const ROUTE_CONCURRENCY = 2;
+/**
+ * A ceiling on the backlog, not on a draw. A repo past this is telling you it
+ * wants a narrower board, not a thousand router calls.
+ */
+const MAX_ROUTE_QUEUE = 200;
+/** Muted violet, so the routed labels read as one family on GitHub. */
+const ROUTE_LABEL_COLOR = "6f42c1";
+
+interface RouteAnswer {
+  /** Skill name, already checked against `KIND_PATTERN`. */
+  readonly kind: TicketKind;
+  /** Sub-command the router picked, or "". Logged, not dispatched. */
+  readonly command: string;
+}
+
+/** One candidate object, or null when it is not the router's answer. */
+function readAnswer(json: string): RouteAnswer | null {
+  let parsed: { skill?: unknown; command?: unknown };
+  try {
+    parsed = JSON.parse(json) as typeof parsed;
+  } catch {
     return null;
   }
-  return body.trim() === "" ? "empty body" : null;
+
+  const skill = typeof parsed.skill === "string" ? parsed.skill.trim().toLowerCase() : "";
+  // An empty skill is the router saying none of them fits, which is a real
+  // answer and leaves the ticket on the default kind.
+  if (!KIND_PATTERN.test(skill)) return null;
+  return { kind: skill, command: typeof parsed.command === "string" ? parsed.command : "" };
 }
+
+/**
+ * Pulls the router's object out of whatever pi printed around it.
+ *
+ * `--json` asks for a bare object and gets one, but this also reads a partial
+ * stream, because the caller tries it on every chunk. Opening braces are walked
+ * from the outside in, so a stray line printed before the answer costs a failed
+ * parse rather than the ticket's kind.
+ */
+function parseRouteAnswer(stdout: string): RouteAnswer | null {
+  const end = stdout.lastIndexOf("}");
+  if (end === -1) return null;
+
+  for (
+    let start = stdout.indexOf("{");
+    start !== -1 && start < end;
+    start = stdout.indexOf("{", start + 1)
+  ) {
+    const answer = readAnswer(stdout.slice(start, end + 1));
+    if (answer !== null) return answer;
+  }
+  return null;
+}
+
+/** Asks the router which skill runs this issue. Never throws; null means unknown. */
+async function routeTicket(root: string, issueUrl: string): Promise<RouteAnswer | null> {
+  const { answer, detail } = await runForAnswer(
+    piBinary(),
+    ["-p", `/skill:route ${issueUrl} --json`],
+    root,
+    routeAbort.signal,
+    ROUTE_TIMEOUT_MS,
+    parseRouteAnswer,
+  );
+  if (answer === null) console.error(`[tickets] route failed for ${issueUrl}: ${detail}`);
+  return answer;
+}
+
+/**
+ * Writes the kind back to the issue. Creating the label first because the repo
+ * has never seen `skill:<name>` before and `gh issue edit --add-label` refuses
+ * a label that does not exist; an already-created label fails that call and the
+ * add below speaks for both.
+ */
+async function writeSkillLabel(
+  repo: string,
+  root: string,
+  number: number,
+  kind: TicketKind,
+): Promise<string | null> {
+  const label = skillLabel(kind);
+  await run(
+    ghBinary(),
+    [
+      "label",
+      "create",
+      label,
+      "--repo",
+      repo,
+      "--color",
+      ROUTE_LABEL_COLOR,
+      "--description",
+      "Skill the ticket board dispatches this with",
+    ],
+    root,
+  );
+
+  const edited = await run(
+    ghBinary(),
+    ["issue", "edit", String(number), "--repo", repo, "--add-label", label],
+    root,
+  );
+  return edited.code === 0 ? null : failure(edited);
+}
+
+/**
+ * The routing backlog for one checkout.
+ *
+ * Routing does not block a draw. A repo that has never been routed can arrive
+ * with eighty kindless issues, and waiting for even six of them would mean a
+ * minute of spinner before the board appeared. So the draw queues them and
+ * returns; the queue drains behind it, each answer lands as a label on GitHub,
+ * and the panel refetches while the count is above zero.
+ *
+ * Order is the one thing the queue insists on: the tickets you triaged are the
+ * ones you are about to look at, so they route first, newest before oldest.
+ */
+interface RouteQueue {
+  readonly repo: string;
+  readonly root: string;
+  /** Issue number to URL, waiting or in flight, so a redraw never queues one twice. */
+  readonly pending: Map<number, string>;
+  draining: boolean;
+}
+
+/** One queue per main checkout. Two repos route in parallel, one does not. */
+const routeQueues = new Map<string, RouteQueue>();
+
+/** Aborted when the plugin stops, which is the only thing that cancels a route. */
+const routeAbort = new AbortController();
+
+/**
+ * Queues every candidate that survived the filters without a kind of its own.
+ * Returns how many this checkout is now waiting on, including anything an
+ * earlier draw queued.
+ */
+function scheduleRouting(
+  repo: string,
+  root: string,
+  candidates: readonly Candidate[],
+): number {
+  const queue = routeQueues.get(root) ?? { repo, root, pending: new Map(), draining: false };
+  routeQueues.set(root, queue);
+
+  const unrouted = candidates
+    .filter((candidate) => ownKind(candidate.labels) === null && candidate.inheritedKind === null)
+    .sort((a, b) => Number(b.triaged) - Number(a.triaged) || b.number - a.number);
+
+  for (const candidate of unrouted) {
+    if (queue.pending.size >= MAX_ROUTE_QUEUE) break;
+    if (!queue.pending.has(candidate.number)) queue.pending.set(candidate.number, candidate.url);
+  }
+
+  // Deliberately not awaited: the draw is done and the panel is waiting on it.
+  void drainRouteQueue(queue);
+  return queue.pending.size;
+}
+
+/**
+ * Works the backlog down, a few at a time, until it is empty or the plugin
+ * stops. Only one drain per checkout runs at a time, so a refresh mid-drain
+ * adds to the queue rather than starting a second one.
+ *
+ * The cached board is dropped after every batch, because the labels just
+ * written are what the next draw reads the kinds from.
+ */
+async function drainRouteQueue(queue: RouteQueue): Promise<void> {
+  if (queue.draining) return;
+  queue.draining = true;
+
+  try {
+    while (queue.pending.size > 0 && !routeAbort.signal.aborted) {
+      const batch = [...queue.pending].slice(0, ROUTE_CONCURRENCY);
+      await mapLimit(batch, ROUTE_CONCURRENCY, async ([number, url]) => {
+        try {
+          await routeOne(queue.repo, queue.root, number, url);
+        } catch (caught) {
+          console.error(`[tickets] route of #${number} threw: ${toMessage(caught)}`);
+        } finally {
+          // Dropped whatever happened. A ticket the router could not answer for
+          // is asked again on the next draw, not in a loop inside this one.
+          queue.pending.delete(number);
+        }
+      });
+      invalidateBoard(queue.root);
+    }
+  } finally {
+    queue.draining = false;
+  }
+}
+
+/** One ticket: ask the router, write the answer back to the issue. */
+async function routeOne(
+  repo: string,
+  root: string,
+  number: number,
+  url: string,
+): Promise<void> {
+  const answer = await routeTicket(root, url);
+  if (answer === null) {
+    console.log(`[tickets] #${number} stays ${DEFAULT_KIND}, the router had no answer`);
+    return;
+  }
+
+  const problem = await writeSkillLabel(repo, root, number, answer.kind);
+  console.log(
+    `[tickets] routed #${number} to ${answer.kind}` +
+      (answer.command === "" ? "" : ` (${answer.command})`) +
+      (problem === null ? "" : `, but the label did not stick: ${problem}`),
+  );
+}
+
+/**
+ * Stops the backlog when the plugin does. Called from the entry's cleanup: a pi
+ * turn is a subprocess of a subprocess, and nothing else would take it down.
+ */
+export function stopRouting(): void {
+  routeAbort.abort();
+  for (const queue of routeQueues.values()) queue.pending.clear();
+  routeQueues.clear();
+}
+
+// --- selection ----------------------------------------------------------------
 
 async function buildBoard(
   repoDir: string,
@@ -606,7 +925,6 @@ async function buildBoard(
   vocabulary: LabelVocabulary,
 ): Promise<TicketBoard> {
   const fetchedAt = new Date().toISOString();
-  const seeds = seedLabels(vocabulary);
   const root = await resolveRepoRoot(repoDir);
   const repo = await resolveRepo(root);
 
@@ -630,20 +948,22 @@ async function buildBoard(
     );
   }
 
-  for (const issue of snapshot.issues) {
-    const candidate = toCandidate(issue, seeds);
-    // Nothing under a seed label is the board's business, and listing every
-    // other open issue as skipped would bury the ones that nearly qualified.
-    if (!candidate.inScope) continue;
+  /**
+   * Every filter that can run without knowing the kind runs here, including the
+   * empty-body one, so a repo full of one-line issues never queues them for the
+   * router.
+   */
+  const candidates: Candidate[] = [];
 
-    const kind = detectKind(candidate.labels, candidate.inheritedKind);
+  for (const issue of snapshot.issues) {
+    const candidate = toCandidate(issue, vocabulary.readyLabel);
 
     if (candidate.labels.includes(vocabulary.deferredLabel)) {
       skipped.push(`#${candidate.number}: ${vocabulary.deferredLabel}`);
       continue;
     }
-    // Spec before triage, so a map reads as "tracking spec" rather than as a
-    // ticket that forgot its label.
+    // Spec first, so a map reads as "tracking spec" rather than as a ticket
+    // with something wrong with it.
     if (isLabelledSpec(candidate.labels)) {
       skipped.push(`#${candidate.number}: tracking spec, not a task`);
       continue;
@@ -652,20 +972,31 @@ async function buildBoard(
       skipped.push(`#${candidate.number}: spec, it owns ${candidate.subIssues} sub-issue(s)`);
       continue;
     }
-    if (!isTakeable(candidate.labels, vocabulary.readyLabel)) {
-      skipped.push(`#${candidate.number}: no ${vocabulary.readyLabel} label`);
+    const others = candidate.assignees.filter((login) => login !== me);
+    if (others.length > 0) {
+      skipped.push(`#${candidate.number}: assigned to ${others.join(", ")}, not you`);
       continue;
     }
+    // Every kind needs a body, and the one kind that asks for more than that
+    // asks for headings this would have failed anyway.
+    if (candidate.body.trim() === "") {
+      skipped.push(`#${candidate.number}: empty body`);
+      continue;
+    }
+
+    candidates.push(candidate);
+  }
+
+  // Queued, not awaited. Anything still waiting on an answer lists as the
+  // default kind for now and redraws as itself when its label lands.
+  const routing = scheduleRouting(repo, root, candidates);
+
+  for (const candidate of candidates) {
+    const kind = detectKind(candidate.labels, candidate.inheritedKind);
 
     const problem = shapeProblem(kind, candidate.body);
     if (problem !== null) {
       skipped.push(`#${candidate.number}: ${problem}`);
-      continue;
-    }
-
-    const others = candidate.assignees.filter((login) => login !== me);
-    if (others.length > 0) {
-      skipped.push(`#${candidate.number}: assigned to ${others.join(", ")}, not you`);
       continue;
     }
 
@@ -694,12 +1025,20 @@ async function buildBoard(
     });
   }
 
-  // Ready first, then wayfinder before impeccable before implement, then newest.
+  // Dispatchable first, then the ones you triaged, then the routing table's own
+  // order, then anything routed in from outside it alphabetically, then newest.
+  //
+  // Triage moved into the sort when the gate went: with every open issue listed,
+  // the ready label is what separates "I said go" from "it exists".
   const rank: Record<TicketState, number> = { ready: 0, running: 1, claimed: 2, blocked: 3 };
-  const kindRank = (kind: TicketKind) => KIND_ORDER.indexOf(kind);
+  const triaged = (ticket: Ticket) => Number(isTriaged(ticket.labels, vocabulary.readyLabel));
   tickets.sort(
     (a, b) =>
-      rank[a.state] - rank[b.state] || kindRank(a.kind) - kindRank(b.kind) || b.number - a.number,
+      rank[a.state] - rank[b.state] ||
+      triaged(b) - triaged(a) ||
+      kindRank(a.kind) - kindRank(b.kind) ||
+      a.kind.localeCompare(b.kind) ||
+      b.number - a.number,
   );
 
   return {
@@ -709,6 +1048,7 @@ async function buildBoard(
     baseBranch,
     tickets,
     skipped: skipped.sort(),
+    routing,
     error: null,
   };
 }
@@ -773,13 +1113,13 @@ export async function listTicketsHandler(
   try {
     const board = await buildBoard(input.repoDir, context.paseo, vocabulary);
     cacheBoard(board, vocabulary);
-    const byKind = KIND_ORDER.map(
-      (kind) => `${board.tickets.filter((ticket) => ticket.kind === kind).length} ${kind}`,
-    ).join(", ");
+    const byKind = kindsPresent(board.tickets.map((ticket) => ticket.kind))
+      .map((kind) => `${board.tickets.filter((ticket) => ticket.kind === kind).length} ${kind}`)
+      .join(", ");
     console.log(
       `[tickets] ${board.repo}: ${board.tickets.filter((t) => t.state === "ready").length} ready, ` +
-        `${board.tickets.length} listed (${byKind}), ${board.skipped.length} skipped ` +
-        `in ${Date.now() - started}ms`,
+        `${board.tickets.length} listed (${byKind}), ${board.skipped.length} skipped, ` +
+        `${board.routing} routing in ${Date.now() - started}ms`,
     );
     return board;
   } catch (caught) {
@@ -792,6 +1132,7 @@ export async function listTicketsHandler(
       baseBranch: null,
       tickets: [],
       skipped: [],
+      routing: 0,
       error,
     };
   }

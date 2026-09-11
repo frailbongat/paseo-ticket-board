@@ -2,9 +2,9 @@ import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { TICKET_KINDS, type TicketCard as TicketCardData } from "../shared/tickets";
+import { type TicketCard as TicketCardData, kindConfig } from "../shared/tickets";
 import { useBoardAppearance } from "./settings";
-import { AppearanceContext, KIND_ICON, useAppearance, withAlpha } from "./theme";
+import { AppearanceContext, kindIcon, kindTint, useAppearance, withAlpha } from "./theme";
 import {
   Chip,
   RunBand,
@@ -87,7 +87,7 @@ function LinkRow({
 
 function TicketCardFace({ item, theme }: PluginTimelineItemProps<TicketCardData>) {
   const card = item.data;
-  const kind = TICKET_KINDS[card.kind];
+  const kind = kindConfig(card.kind);
   const look = useAppearance();
   const accent = theme.colors.accent;
   const blocked = card.blockers.length > 0;
@@ -98,7 +98,12 @@ function TicketCardFace({ item, theme }: PluginTimelineItemProps<TicketCardData>
         <TicketHead theme={theme} number={card.number} title={card.title} />
 
         <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-          <Chip text={kind.title} icon={KIND_ICON[card.kind]} tint={accent} theme={theme} />
+          <Chip
+            text={kind.title}
+            icon={kindIcon(card.kind)}
+            tint={kindTint(card.kind, theme)}
+            theme={theme}
+          />
         </View>
 
         {blocked ? (

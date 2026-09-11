@@ -9,23 +9,25 @@ import { useBoardSettings } from "./settings";
 import { vocabularyOf } from "../shared/settings";
 import {
   AppearanceContext,
-  KIND_ICON,
   buildAppearance,
   clockTime,
   factColor,
   factsFor,
+  kindIcon,
+  kindTint,
   shortLabel,
   statePresentation,
   useAppearance,
   withAlpha,
 } from "./theme";
 import {
-  KIND_ORDER,
-  TICKET_KINDS,
   type Ticket,
   type TicketBoard,
   type TicketKind,
   appendTicketCard,
+  isSkillLabel,
+  kindConfig,
+  kindsPresent,
   listTickets,
   claimDispatch,
   planDispatch,
@@ -47,6 +49,13 @@ import {
   TicketMark,
   TicketNote,
 } from "./ui";
+
+/**
+ * How often the panel redraws while the router is still naming kinds. One
+ * route is a whole pi turn, so anything faster is just asking the daemon the
+ * same question twice.
+ */
+const ROUTING_POLL_MS = 8_000;
 
 /** Ready is always dispatchable. Running and claimed need the force toggle. */
 function canDispatch(ticket: Ticket, force: boolean): boolean {
@@ -80,7 +89,6 @@ function TicketRow({
   selectable,
   pending,
   force,
-  readyLabel,
   onToggle,
 }: {
   ticket: Ticket;
@@ -90,18 +98,19 @@ function TicketRow({
   /** This ticket is part of the dispatch currently in flight. */
   pending: boolean;
   force: boolean;
-  /** Hidden from the chips: every listed ticket carries it. */
-  readyLabel: string;
   onToggle: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const look = useAppearance();
   const fade = useRef(new Animated.Value(1)).current;
 
-  const kind = TICKET_KINDS[ticket.kind];
+  const kind = kindConfig(ticket.kind);
   const state = statePresentation(ticket.state, theme);
   const facts = factsFor(ticket, force);
-  const labels = ticket.labels.filter((label) => label !== readyLabel).map(shortLabel);
+  // The kind chip already carries the `skill:` label, so that one is dropped.
+  // The ready label is shown: it used to be on every listed ticket and said
+  // nothing, and now it is the difference between triaged and merely open.
+  const labels = ticket.labels.filter((label) => !isSkillLabel(label)).map(shortLabel);
   const shownLabels = labels.slice(0, LABEL_CAP);
   const hiddenLabels = labels.length - shownLabels.length;
 
@@ -172,8 +181,8 @@ function TicketRow({
                 >
                   <Chip
                     text={kind.title}
-                    icon={KIND_ICON[ticket.kind]}
-                    tint={theme.colors.accent}
+                    icon={kindIcon(ticket.kind)}
+                    tint={kindTint(ticket.kind, theme)}
                     theme={theme}
                   />
                   {shownLabels.map((label) => (
@@ -210,7 +219,8 @@ function TicketRow({
   );
 }
 
-type KindFilter = TicketKind | "all";
+/** The kind the filter row is on. `null` is All, so no skill name can collide. */
+type KindFilter = TicketKind | null;
 
 export interface BoardProps {
   theme: PluginTheme;
@@ -250,7 +260,7 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
 
   const [selected, setSelected] = useState<readonly number[]>([]);
   const [force, setForce] = useState(false);
-  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
+  const [kindFilter, setKindFilter] = useState<KindFilter>(null);
   const [showSkipped, setShowSkipped] = useState(false);
 
   const board = useQuery({
@@ -268,6 +278,12 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
     // Keep the old rows on screen while a refetch runs, so the list does not
     // blink empty every time.
     placeholderData: (previous: TicketBoard | undefined) => previous,
+    // The router works its backlog behind the draw that queued it, writing a
+    // `skill:` label per answer. Polling while that count is above zero is how
+    // those tickets stop reading as Implement and become themselves, without
+    // anybody pressing Refresh.
+    refetchInterval: (query) =>
+      (query.state.data?.routing ?? 0) > 0 ? ROUTING_POLL_MS : false,
   });
 
   const hasRepo = typeof repoDir === "string" && repoDir.length > 0;
@@ -275,9 +291,16 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
   const tickets = useMemo(() => board.data?.tickets ?? [], [board.data]);
 
   const visible = useMemo(
-    () => (kindFilter === "all" ? tickets : tickets.filter((t) => t.kind === kindFilter)),
+    () => (kindFilter === null ? tickets : tickets.filter((t) => t.kind === kindFilter)),
     [tickets, kindFilter],
   );
+
+  /**
+   * The filter row is built from the kinds on the board, not from the routing
+   * table: a ticket can name any installed skill, so the table no longer knows
+   * every kind that can turn up.
+   */
+  const kinds = useMemo(() => kindsPresent(tickets.map((ticket) => ticket.kind)), [tickets]);
 
   const toggle = useCallback((number: number) => {
     setSelected((current) =>
@@ -397,10 +420,13 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
     return `${readyCount} ready to dispatch`;
   })();
 
+  const routing = board.data?.routing ?? 0;
+
   const summary = [
     board.data?.repo,
     board.data?.baseBranch ? `base ${board.data.baseBranch}` : null,
     tickets.length > 0 ? `${tickets.length} listed` : null,
+    routing > 0 ? `picking a skill for ${routing}` : null,
   ]
     .filter((part): part is string => Boolean(part))
     .join(" · ");
@@ -472,18 +498,18 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
             <Segment
               label="All"
               count={tickets.length}
-              active={kindFilter === "all"}
+              active={kindFilter === null}
               theme={theme}
-              onPress={() => setKindFilter("all")}
+              onPress={() => setKindFilter(null)}
             />
-            {KIND_ORDER.map((kind) => (
+            {kinds.map((kind) => (
               <Segment
                 key={kind}
-                label={TICKET_KINDS[kind].title}
-                icon={KIND_ICON[kind]}
+                label={kindConfig(kind).title}
+                icon={kindIcon(kind)}
                 count={tickets.filter((ticket) => ticket.kind === kind).length}
                 active={kindFilter === kind}
-                accent={theme.colors.accent}
+                accent={kindTint(kind, theme)}
                 theme={theme}
                 onPress={() => setKindFilter(kind)}
               />
@@ -526,18 +552,18 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
             theme={theme}
             icon="Inbox"
             title="No workable tickets"
-            detail={`Label an open issue \u201c${readyLabel}\u201d, or let /wayfinder write one, and it shows up on the next refresh.`}
+            detail={`Every open issue lands here. Write one, or check that this repository has any open, and refresh.`}
             action={{ label: "Refresh", onPress: () => void board.refetch() }}
           />
         ) : null}
 
-        {tickets.length > 0 && visible.length === 0 && kindFilter !== "all" ? (
+        {tickets.length > 0 && visible.length === 0 && kindFilter !== null ? (
           <EmptyState
             theme={theme}
-            icon={KIND_ICON[kindFilter]}
-            title={`No ${TICKET_KINDS[kindFilter].title} tickets`}
+            icon={kindIcon(kindFilter)}
+            title={`No ${kindConfig(kindFilter).title} tickets`}
             detail={`${tickets.length} of another kind are waiting behind this filter.`}
-            action={{ label: "Show all", onPress: () => setKindFilter("all") }}
+            action={{ label: "Show all", onPress: () => setKindFilter(null) }}
           />
         ) : null}
 
@@ -549,7 +575,6 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
                 ticket={ticket}
                 theme={theme}
                 force={force}
-                readyLabel={readyLabel}
                 selected={selected.includes(ticket.number)}
                 selectable={canDispatch(ticket, force)}
                 pending={busy && dispatchable.includes(ticket.number)}
