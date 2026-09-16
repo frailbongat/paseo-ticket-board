@@ -25,7 +25,7 @@ export const DEFAULT_AGENT_THINKING = "high";
 
 /**
  * Triage. Sorts a ticket to the top of the board rather than admitting it:
- * every open issue is listed, because every ticket routes to some skill.
+ * every open issue is listed, as wayfinding work or as implementation work.
  */
 export const DEFAULT_READY_LABEL = "ready-for-agent";
 

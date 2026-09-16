@@ -261,53 +261,27 @@ export function statePresentation(state: TicketState, theme: PluginTheme): State
 }
 
 /**
- * The kinds the board has a look for. Every kind in the routing table is here,
- * plus the skills tickets get routed to often enough to deserve a glyph.
+ * A glyph per kind, and there are two kinds.
  *
  * A kind shares the accent rather than taking a hue of its own, because state
  * already owns the three status colors and a second color axis would collide
  * with it. The icon carries the kind.
  */
-const KIND_ICONS: Record<string, string> = {
+const KIND_ICONS: Record<TicketKind, string> = {
   wayfinder: "Compass",
-  impeccable: "Sparkles",
   implement: "Hammer",
-  tdd: "FlaskConical",
-  research: "BookOpen",
-  "diagnosing-bugs": "Bug",
-  grilling: "MessageCircleQuestion",
-  prototype: "Boxes",
-  "code-review": "ClipboardCheck",
-  unslop: "Eraser",
 };
 
-/** Any skill the board was never told about. Deliberately generic. */
-export const UNKNOWN_KIND_ICON = "Puzzle";
-
-/** True for a kind this file can draw properly. */
-function isKnownKind(kind: TicketKind): boolean {
-  return Object.hasOwn(KIND_ICONS, kind);
-}
-
 export function kindIcon(kind: TicketKind): string {
-  return isKnownKind(kind) ? (KIND_ICONS[kind] as string) : UNKNOWN_KIND_ICON;
+  return KIND_ICONS[kind];
 }
 
-/**
- * The chip color for a kind.
- *
- * A ticket can now name any installed skill, so the board draws kinds it has
- * never heard of. Those get the fallback instead of the accent: Paseo hands
- * plugins eleven colors, the three status hues already mean ready, running, and
- * blocked, and the muted foreground is the one left that says "this is real,
- * the board just has no opinion about it". It is a full-contrast text color, so
- * the chip stays as readable as the ones beside it.
- */
-export function kindTint(kind: TicketKind, theme: PluginTheme): string {
-  return isKnownKind(kind) ? theme.colors.accent : theme.colors.foregroundMuted;
+/** The chip color for a kind. Both of them read as the accent. */
+export function kindTint(_kind: TicketKind, theme: PluginTheme): string {
+  return theme.colors.accent;
 }
 
-/** `impeccable:harden` reads as `harden` once the kind chip carries the family. */
+/** `wayfinder:map` reads as `map` once the kind chip carries the family. */
 export function shortLabel(label: string): string {
   const colon = label.indexOf(":");
   return colon === -1 ? label : label.slice(colon + 1);

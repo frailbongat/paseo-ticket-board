@@ -1,7 +1,8 @@
 # paseo-ticket-board
 
-A Paseo panel that lists the GitHub tickets an agent can take, works out which skill each one was
-written for, and dispatches it into its own worktree workspace. Tap tickets, tap Dispatch.
+A Paseo panel that lists the GitHub tickets an agent can take, works out whether each one is
+wayfinding or implementation work, and dispatches it into its own worktree workspace. Tap tickets,
+tap Dispatch.
 
 Each dispatched ticket gets a Paseo worktree workspace on `<number>-<slug>` off `main`, with a pi
 agent already holding the right command.
@@ -10,69 +11,42 @@ Formerly `paseo-impeccable-board`, which only ever understood Impeccable tickets
 
 ## Kinds
 
-A ticket's kind is the name of the skill that runs it, so any installed skill can run a ticket.
-`skill:tdd` on an issue draws a **Tdd** chip and dispatches `/skill:tdd <ticket-url>`.
+The board dispatches two commands, because the agent behind it holds two worth dispatching:
+`/skill:wayfinder` and `/skill:implement`. A ticket is wayfinding work or it is implementation work.
 
-The board decides the kind from the ticket's own labels first, then from the spec it hangs off, then
-by asking the router, and falls back to `implement` last.
+It was open once — a kind was any installed skill name, and a ticket naming none was handed to
+`/skill:route` to be sorted. That is gone: no router, no pi subprocess, no write-back.
 
-| Source            | A ticket takes its kind from this when                                                   |
-| ----------------- | ------------------------------------------------------------------------------------------ |
-| `skill:<name>`    | the label is there, whoever put it there                                                   |
-| `wayfinder:*`     | `/wayfinder` wrote the ticket and stamped its own family                                   |
-| `impeccable:*`    | `/impeccable-to-tickets` wrote it                                                          |
-| The spec above it | the nearest ancestor that declares a kind, up to three levels                              |
-| `/skill:route`    | nothing above did. Asked once, and the answer is written back as a `skill:` label          |
-| `implement`       | the router had no answer either                                                            |
+The board decides the kind from the ticket's own labels first, then from the spec it hangs off, and
+falls back to `implement` last.
+
+| Source            | A ticket takes its kind from this when                                    |
+| ----------------- | ------------------------------------------------------------------------- |
+| `skill:wayfinder` | the label is there, whoever put it there                                  |
+| `skill:implement` | likewise, and it is the same answer as saying nothing                     |
+| `wayfinder:*`     | `/wayfinder` wrote the ticket and stamped its own family                  |
+| The spec above it | the nearest ancestor that declares a kind, up to three levels             |
+| `implement`       | nothing above did                                                         |
+
+A `skill:` label naming anything else — `skill:tdd`, `skill:research` — is **not** rerouted to
+`implement`. It is somebody's ticket for a command this board does not run, so it is listed under
+Skipped as "asks for tdd, this board runs wayfinder and implement".
 
 ### The routing table
 
-`TICKET_KINDS` in `shared/tickets.ts` holds an entry only for a kind that needs something other than
-"invoke `/skill:<kind>` on the ticket URL". Everything else runs off the fallback, which is why a
-`skill:tdd` label needs no code change.
+`TICKET_KINDS` in `shared/tickets.ts` holds both kinds. `implement` is the plain case; `wayfinder`
+is the one that needs more than a URL, and says so in its entry rather than in a branch further down.
 
-| Kind         | Entry exists because                                                                  | Prompt                                     |
-| ------------ | --------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `wayfinder`  | it is invoked on the map, with an extra line naming the ticket                           | `/skill:wayfinder <map-url>` + ticket line |
-| `impeccable` | the skill is named `impeccable-implement`, and the body must carry two sections           | `/skill:impeccable-implement <ticket-url>` |
-| `implement`  | it is the fallback kind, and its title is not its skill name by accident                  | `/skill:implement <ticket-url>`            |
-| anything else | no entry. `skill:tdd` is `Tdd`, runs `tdd`, needs a non-empty body                       | `/skill:<name> <ticket-url>`               |
+| Kind        | Prompt                                     |
+| ----------- | ------------------------------------------ |
+| `wayfinder` | `/skill:wayfinder <map-url>` + ticket line |
+| `implement` | `/skill:implement <ticket-url>`            |
 
 Wayfinder is the one kind whose skill is invoked on the **map**, not on the ticket: `/wayfinder`'s
 "Work through the map" mode loads the map first and takes a named ticket as an option. So the
 dispatched prompt is the map URL followed by "The ticket is `<url>`. Resolve that one and no other."
 A wayfinder ticket with no map is invoked on itself and told so. That is a table entry
 (`invokeOn: "spec"` plus a `note`), not a branch in the prompt builder.
-
-### Routing a ticket that names no skill
-
-A ticket that survives the filters with no kind of its own and no spec to inherit one from is routed:
-the daemon runs `pi -p "/skill:route <issue-url> --json"`, reads the `{skill, command, target,
-prompt}` object the router prints, and writes the skill straight back to the issue as
-`skill:<name>`, creating the label when the repo has never seen it.
-
-That write-back is the cost control: the question is asked once per ticket ever, and every later draw
-reads a label. A router that fails or answers unreadably costs the ticket nothing; it is asked again
-on the next draw.
-
-**Routing never blocks a draw.** A repo that has never been routed can arrive with eighty kindless
-issues, and waiting on even a few of them would mean a minute of spinner before anything appeared.
-So the draw queues them and returns in about a second. One queue per checkout drains behind it, two
-at a time, triaged first and newest before oldest. Each answer lands as a label on GitHub and drops
-the cached board.
-
-While the queue is draining, `TicketBoard.routing` is the number still unanswered, the header reads
-"picking a skill for 8", and the panel refetches every 8 seconds. A queued ticket is listed the whole
-time, as `implement`, and redraws as itself when its label lands. The backlog stops at 200.
-
-The plugin's cleanup calls `stopRouting()`, because a route is a pi subprocess of a daemon
-subprocess and nothing else would take one down.
-
-Every filter that works without a kind runs before the queue, so an empty issue, a spec, or someone
-else's ticket never costs a router call.
-
-pi prints its reply and then stays up, so the board reads until the JSON object parses and kills the
-process rather than waiting for a stdout that never closes.
 
 The map is found two ways: by expanding a `wayfinder:map` into its sub-issues, and by reading
 `parent_issue_url` off a ticket that was seeded by its own `wayfinder:<type>` label. The second path
@@ -83,9 +57,9 @@ is what stops a labelled ticket being dispatched map-less just because the walk 
 A ticket is **listed** when it is open, not deferred, not a spec, not assigned to somebody else, and
 correctly shaped for its kind. Everything else is reported under "Skipped".
 
-There is **no triage gate**. Every open issue in the repository is a candidate, because every ticket
-routes to some skill now. The board used to demand the ready label only because it understood three
-kinds and anything unlabelled was no use to it.
+There is **no triage gate**. Every open issue in the repository is a candidate, because every one it
+lists is either wayfinding work or implementation work. The board used to demand the ready label
+only because anything unlabelled was no use to it.
 
 - **Triage**: the ready label, `ready-for-agent` unless settings say otherwise, sorts a ticket above
   the untriaged ones and is drawn as a chip. It admits nothing and excludes nothing.
@@ -94,10 +68,11 @@ kinds and anything unlabelled was no use to it.
 - **Spec**: an issue carrying `wayfinder:map` or `impeccable:spec`, or one that owns sub-issues.
   Specs are replaced by their open sub-issues, walked up to three levels down, then filtered like any
   other candidate. A spec hands its kind down, which is how a plain child of a wayfinder map still
-  dispatches as wayfinder work.
-- **Shape**: only a kind whose table entry declares `requiredSections` prescribes one. Impeccable is
-  the only one that does, `## Agent prompt` plus `## Acceptance criteria`, because its own ticket
-  writer guarantees it. Every other kind is a prose spec, so the only bar is a non-empty body.
+  dispatches as wayfinder work. `impeccable:spec` no longer names a kind, only a tracking issue: its
+  children list as implementation work.
+- **Foreign skill**: a `skill:` label naming anything but `wayfinder` or `implement`. Skipped, not
+  rerouted.
+- **Shape**: neither kind prescribes one, so the only bar is a non-empty body.
 
 Listed tickets carry one of four states:
 
@@ -108,8 +83,8 @@ Listed tickets carry one of four states:
 | `claimed` | Assigned to you, no worktree left behind                                       | Force only                |
 | `blocked` | At least one open blocker                                                      | Never                     |
 
-Sort order: dispatchable first, then the tickets carrying the ready label, then the routing table's
-own order, then any other skill alphabetically, then newest first.
+Sort order: dispatchable first, then the tickets carrying the ready label, then wayfinding work above
+implementation work, then newest first.
 
 ## The claim
 
@@ -207,10 +182,10 @@ shortcut alone.
 | File                       | Runtime | Holds                                                              |
 | -------------------------- | ------- | ------------------------------------------------------------------ |
 | `index.client.tsx`         | client  | Surface, sidebar item, panel, and Command Center wiring            |
-| `index.server.ts`          | daemon  | RPC handler and lifecycle hook wiring, and stopping the route queue |
+| `index.server.ts`          | daemon  | RPC handler and lifecycle hook wiring                              |
 | `shared/settings.ts`       | both    | Settings document, its defaults, the label vocabulary sent to the daemon, and the appearance choices that stay client-side |
-| `shared/tickets.ts`        | both    | Zod RPC contracts, fixed labels, the routing table, kind detection, prompts, the claim marker, the card contract |
-| `server/tickets.ts`        | daemon  | Every `gh`, `git`, and `pi` call, the ready rules, routing, the claim and its release, the board cache |
+| `shared/tickets.ts`        | both    | Zod RPC contracts, fixed labels, the two kinds, kind detection, prompts, the claim marker, the card contract |
+| `server/tickets.ts`        | daemon  | Every `gh` and `git` call, the ready rules, the claim and its release, the board cache |
 | `client/board.tsx`         | client  | The board: list, kind filter, multi-select, force, refresh, dispatch |
 | `client/board-panel.tsx`   | client  | Workspace-panel wrapper, repo from `projectRootPath`                |
 | `client/board-surface.tsx` | client  | Sidebar wrapper, repo from the host's git projects                  |

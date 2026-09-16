@@ -6,10 +6,11 @@ import { LabelVocabularySchema } from "./settings";
  * Contracts and constants shared by the panel and the daemon handler.
  *
  * The board lists workable GitHub tickets and dispatches each one into its own
- * worktree workspace with the skill that ticket was written for. Which skill is
- * open: a ticket's kind is a skill name, so any installed skill can run a
- * ticket. Ticket selection lives in the server; this file only carries the wire
- * shapes, the fixed label vocabulary, and the prompts.
+ * worktree workspace with the skill that ticket was written for. There are two
+ * of those: `/skill:wayfinder` and `/skill:implement`, the commands the agent
+ * behind this board actually holds. Ticket selection lives in the server; this
+ * file only carries the wire shapes, the fixed label vocabulary, and the
+ * prompts.
  *
  * The parts of the vocabulary a user can retune live in `shared/settings.ts`.
  * The labels below are written by skills rather than by the person triaging,
@@ -21,7 +22,13 @@ import { LabelVocabularySchema } from "./settings";
 /** Canonical map for a wayfinding effort. A spec, never worked directly. */
 export const WAYFINDER_MAP_LABEL = "wayfinder:map";
 
-/** Impeccable audit/critique tracking issue. A spec, never worked directly. */
+/**
+ * Impeccable audit/critique tracking issue. A spec, never worked directly.
+ *
+ * The board no longer dispatches impeccable work, but the label still marks a
+ * tracking issue, and a tracking issue is not a ticket. Its children list as
+ * implementation work like any other loose issue.
+ */
 export const IMPECCABLE_SPEC_LABEL = "impeccable:spec";
 
 /**
@@ -38,35 +45,38 @@ export const AGENT_TICKET_LABEL = "ticket";
 export const AGENT_KIND_LABEL = "kind";
 
 const WAYFINDER_PREFIX = "wayfinder:";
-const IMPECCABLE_PREFIX = "impeccable:";
 
 /**
- * Names a ticket's skill outright: `skill:tdd` dispatches `/skill:tdd <url>`.
+ * Names a ticket's skill outright: `skill:wayfinder` dispatches
+ * `/skill:wayfinder <url>`.
  *
- * The board writes this label itself when a ticket arrives without one, so the
- * routing question is asked once per ticket and the answer lives on the issue
- * where anyone can read it, argue with it, or change it by hand.
+ * Written by hand, on the issue, where anyone can read it or change it. A label
+ * naming any other skill is not this board's ticket: see `foreignSkill`.
  */
 export const SKILL_LABEL_PREFIX = "skill:";
 
 // --- kinds --------------------------------------------------------------------
 
 /**
- * A kind is the name of the skill that runs the ticket. `tdd`, `research`,
- * `impeccable`: whatever is installed, not a fixed set of three.
+ * A kind is the name of the skill that runs the ticket, and there are two of
+ * them.
  *
- * Same shape pi accepts after `/skill:`, checked here because the name is
- * pasted into a command line and read off a GitHub label written by a model.
+ * This used to be open: any installed skill was a kind, and a ticket naming
+ * none was handed to `/skill:route` to be sorted into one. The agent behind the
+ * board now carries two commands worth dispatching, so the set is closed and
+ * the router is gone. A ticket is wayfinding work or it is implementation work,
+ * and implementation is what it is when nothing says otherwise.
  */
-export const KIND_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
+export const TICKET_KIND_NAMES = ["wayfinder", "implement"] as const;
 
-export const TicketKindSchema = z
-  .string()
-  .min(1)
-  .max(60)
-  .regex(KIND_PATTERN, "A kind is a skill name, e.g. tdd.");
+export const TicketKindSchema = z.enum(TICKET_KIND_NAMES);
 
 export type TicketKind = z.infer<typeof TicketKindSchema>;
+
+/** True for a skill name this board dispatches. */
+export function isTicketKind(name: string): name is TicketKind {
+  return (TICKET_KIND_NAMES as readonly string[]).includes(name);
+}
 
 /** What a ticket runs as when nothing, nobody, and no router says otherwise. */
 export const DEFAULT_KIND: TicketKind = "implement";
@@ -86,19 +96,16 @@ export interface KindConfig {
    * URL, the latter null when the ticket has no spec of its own.
    */
   readonly note?: (issueUrl: string, specUrl: string | null) => string;
-  /** `## ` headings the ticket body must carry, checked by the server. */
-  readonly requiredSections?: readonly string[];
 }
 
 /**
- * The routing table.
+ * The routing table: one entry per kind, both of them.
  *
- * An entry exists only for a kind that needs something other than "invoke
- * `/skill:<kind>` on the ticket URL": a different skill name, a different
- * target, an extra instruction, or a body shape. Every other skill runs off the
- * fallback `kindConfig` builds, which is why a `skill:tdd` label needs no entry.
+ * `implement` is the plain case, "invoke `/skill:implement` on the ticket URL".
+ * `wayfinder` is the one that needs more than that, and says so here rather
+ * than in a branch further down.
  */
-export const TICKET_KINDS: Record<string, KindConfig> = {
+export const TICKET_KINDS: Record<TicketKind, KindConfig> = {
   /**
    * Written by `/wayfinder`, or a child of a `wayfinder:map`. The one kind
    * invoked on the map rather than on the ticket: "Work through the map" loads
@@ -113,61 +120,59 @@ export const TICKET_KINDS: Record<string, KindConfig> = {
         ? `Work through that map. The ticket is ${issueUrl}. Resolve that one and no other.`
         : "That URL is a ticket, not a map. Load whichever map owns it, if one does, then resolve that ticket and no other.",
   },
-  /** Written by `/impeccable-to-tickets`, which guarantees the two sections. */
-  impeccable: {
-    title: "Impeccable",
-    skill: "impeccable-implement",
-    requiredSections: ["Agent prompt", "Acceptance criteria"],
-  },
-  /** The specs `/grill-with-docs` and `/to-spec` publish, and the fallback. */
+  /**
+   * Everything else: the specs `/grill-with-docs` and `/to-spec` publish, the
+   * loose issue somebody opened by hand, and the default.
+   */
   implement: { title: "Implement", skill: "implement" },
 };
 
-/** `tdd` reads as `Tdd`, `design-taste-frontend` as `Design taste frontend`. */
-function titleOf(kind: TicketKind): string {
-  const words = kind.replace(/[-_.]+/g, " ").trim();
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-/**
- * How this kind dispatches. A kind the table never heard of runs the skill of
- * the same name on the ticket URL, which is the whole point of the table being
- * open: installing a skill is enough to make it dispatchable.
- */
+/** How this kind dispatches. */
 export function kindConfig(kind: TicketKind): KindConfig {
-  const entry = Object.hasOwn(TICKET_KINDS, kind) ? TICKET_KINDS[kind] : undefined;
-  return entry ?? { title: titleOf(kind), skill: kind };
+  return TICKET_KINDS[kind];
 }
 
-/** Table order. Everything routed in from outside it sorts after, by name. */
-export const KIND_ORDER: readonly TicketKind[] = Object.keys(TICKET_KINDS);
+/** Table order: wayfinding work above implementation work. */
+export const KIND_ORDER: readonly TicketKind[] = TICKET_KIND_NAMES;
 
 export function kindRank(kind: TicketKind): number {
   const index = KIND_ORDER.indexOf(kind);
   return index === -1 ? KIND_ORDER.length : index;
 }
 
-/**
- * The kinds actually on a board, in the order they should be offered. The
- * filter row is built from this rather than from the table, because the table
- * no longer knows every kind that can appear.
- */
+/** The kinds actually on a board, in the order they should be offered. */
 export function kindsPresent(kinds: readonly TicketKind[]): TicketKind[] {
   return [...new Set(kinds)].sort(
     (a, b) => kindRank(a) - kindRank(b) || a.localeCompare(b),
   );
 }
 
-/** The label that pins a ticket to a skill. */
-export function skillLabel(kind: TicketKind): string {
-  return `${SKILL_LABEL_PREFIX}${kind}`;
+/** The skill name a `skill:` label carries, or null when it carries none. */
+function skillNamed(label: string): string | null {
+  if (!label.startsWith(SKILL_LABEL_PREFIX)) return null;
+  const name = label.slice(SKILL_LABEL_PREFIX.length).trim().toLowerCase();
+  return name === "" ? null : name;
 }
 
 /** The kind a `skill:` label declares, or null when it is not a usable one. */
 export function parseSkillLabel(label: string): TicketKind | null {
-  if (!label.startsWith(SKILL_LABEL_PREFIX)) return null;
-  const name = label.slice(SKILL_LABEL_PREFIX.length).trim().toLowerCase();
-  return KIND_PATTERN.test(name) ? name : null;
+  const name = skillNamed(label);
+  return name !== null && isTicketKind(name) ? name : null;
+}
+
+/**
+ * The skill a ticket asks for that this board does not run, e.g. `tdd`.
+ *
+ * Somebody pinned that ticket to a command the agent does not hold, so the
+ * board says so and lists it as skipped. Rerouting it to `implement` would be
+ * quietly ignoring the one instruction the ticket carries.
+ */
+export function foreignSkill(labels: readonly string[]): string | null {
+  for (const label of labels) {
+    const name = skillNamed(label);
+    if (name !== null && !isTicketKind(name)) return name;
+  }
+  return null;
 }
 
 /** True for a label the kind chip already carries, so the chip row can drop it. */
@@ -178,9 +183,8 @@ export function isSkillLabel(label: string): boolean {
 /**
  * The kind a ticket's own labels declare, or null when they declare none.
  *
- * `skill:` wins, because it is the explicit answer: either somebody typed it or
- * the router wrote it back. The two family prefixes stay as they were, so a
- * ticket `/wayfinder` or `/impeccable-to-tickets` wrote still routes itself.
+ * `skill:` wins, because somebody typed it. The wayfinder family prefix stays
+ * as it was, so a ticket `/wayfinder` wrote still routes itself.
  */
 export function ownKind(labels: readonly string[]): TicketKind | null {
   for (const label of labels) {
@@ -188,7 +192,6 @@ export function ownKind(labels: readonly string[]): TicketKind | null {
     if (declared !== null) return declared;
   }
   if (labels.some((label) => label.startsWith(WAYFINDER_PREFIX))) return "wayfinder";
-  if (labels.some((label) => label.startsWith(IMPECCABLE_PREFIX))) return "impeccable";
   return null;
 }
 
@@ -204,28 +207,12 @@ export function detectKind(
 }
 
 /**
- * What a ticket body is missing for its kind, or null when it is fine.
- *
- * Only a kind that declares `requiredSections` prescribes a shape, because only
- * its own ticket writer guarantees one. Everything else is prose, so the bar is
- * having a body at all.
- */
-export function shapeProblem(kind: TicketKind, body: string): string | null {
-  const required = kindConfig(kind).requiredSections ?? [];
-  for (const section of required) {
-    if (!new RegExp(`^## ${section}`, "m").test(body)) return `no '## ${section}' block`;
-  }
-  if (required.length > 0) return null;
-  return body.trim() === "" ? "empty body" : null;
-}
-
-/**
  * Triage is a sort, not a gate.
  *
- * The board used to list only what carried the ready label, because it could
- * only run three kinds and anything unlabelled was no use to it. Now every
- * ticket routes to some skill, so the label stopped meaning "the board can run
- * this" and went back to meaning what it says: you looked at it and said go.
+ * The board used to list only what carried the ready label, because anything
+ * unlabelled was no use to it. Now every ticket it lists routes to one of the
+ * two skills, so the label stopped meaning "the board can run this" and went
+ * back to meaning what it says: you looked at it and said go.
  * Tickets that carry it sort above the ones that do not.
  */
 export function isTriaged(labels: readonly string[], readyLabel: string): boolean {
@@ -241,7 +228,8 @@ const TRAILER = "Do not summarise the skill back to me, run it.";
  * sees it, pasting the whole SKILL.md body inline and appending the argument.
  *
  * Which URL the line carries and what is said under it come from the routing
- * table, so a new kind is a table entry rather than another branch here.
+ * table, so the wayfinder/implement difference is an entry rather than a branch
+ * here.
  */
 export function ticketPrompt(
   kind: TicketKind,
@@ -314,12 +302,6 @@ export const TicketBoardSchema = z.object({
   tickets: z.array(TicketSchema),
   /** Tickets dropped for a reason the board does not show, e.g. wrong shape. */
   skipped: z.array(z.string()),
-  /**
-   * Tickets whose kind the router is still working out, in the background.
-   * They are listed, as the default kind, and redraw as themselves once their
-   * label lands. Above zero, the panel keeps refetching.
-   */
-  routing: z.number().int().min(0).default(0),
   /** Loud, readable failure. Non-null means the board has nothing to show. */
   error: z.string().nullable(),
 });

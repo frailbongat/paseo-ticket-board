@@ -54,7 +54,6 @@ export default function contribute(client: PluginClientContext) {
       "worktree",
       "agent",
       "wayfinder",
-      "impeccable",
       "implement",
     ],
     context: "workspace",

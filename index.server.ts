@@ -5,7 +5,6 @@ import {
   claimDispatchHandler,
   listTicketsHandler,
   planDispatchHandler,
-  stopRouting,
   workspaceArchivedHook,
 } from "./server/tickets";
 import { boardSettings } from "./shared/settings";
@@ -34,10 +33,5 @@ export default function contribute(server: PluginServerContext) {
   server.on("workspace.archived", workspaceArchivedHook);
   server.on("agent.turn_ended", agentTurnEndedHook);
 
-  // Routing runs behind the draw that queued it, so the backlog can still be
-  // working when the plugin stops. Each route is a pi subprocess, and nothing
-  // else would take those down.
-  return () => {
-    stopRouting();
-  };
+  return () => {};
 }

@@ -50,13 +50,6 @@ import {
   TicketNote,
 } from "./ui";
 
-/**
- * How often the panel redraws while the router is still naming kinds. One
- * route is a whole pi turn, so anything faster is just asking the daemon the
- * same question twice.
- */
-const ROUTING_POLL_MS = 8_000;
-
 /** Ready is always dispatchable. Running and claimed need the force toggle. */
 function canDispatch(ticket: Ticket, force: boolean): boolean {
   if (ticket.state === "blocked") return false;
@@ -278,12 +271,6 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
     // Keep the old rows on screen while a refetch runs, so the list does not
     // blink empty every time.
     placeholderData: (previous: TicketBoard | undefined) => previous,
-    // The router works its backlog behind the draw that queued it, writing a
-    // `skill:` label per answer. Polling while that count is above zero is how
-    // those tickets stop reading as Implement and become themselves, without
-    // anybody pressing Refresh.
-    refetchInterval: (query) =>
-      (query.state.data?.routing ?? 0) > 0 ? ROUTING_POLL_MS : false,
   });
 
   const hasRepo = typeof repoDir === "string" && repoDir.length > 0;
@@ -295,11 +282,7 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
     [tickets, kindFilter],
   );
 
-  /**
-   * The filter row is built from the kinds on the board, not from the routing
-   * table: a ticket can name any installed skill, so the table no longer knows
-   * every kind that can turn up.
-   */
+  /** The filter row carries only the kinds actually on this board. */
   const kinds = useMemo(() => kindsPresent(tickets.map((ticket) => ticket.kind)), [tickets]);
 
   const toggle = useCallback((number: number) => {
@@ -420,13 +403,10 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
     return `${readyCount} ready to dispatch`;
   })();
 
-  const routing = board.data?.routing ?? 0;
-
   const summary = [
     board.data?.repo,
     board.data?.baseBranch ? `base ${board.data.baseBranch}` : null,
     tickets.length > 0 ? `${tickets.length} listed` : null,
-    routing > 0 ? `picking a skill for ${routing}` : null,
   ]
     .filter((part): part is string => Boolean(part))
     .join(" · ");
