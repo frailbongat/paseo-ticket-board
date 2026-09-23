@@ -1,4 +1,4 @@
-import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
+import { type PluginTimelineItemProps, openExternalUrl } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -13,7 +13,6 @@ import {
   TicketHead,
   TicketNote,
 } from "./ui";
-import { openExternal } from "./web";
 
 /**
  * The first row of a dispatched agent's timeline.
@@ -56,7 +55,7 @@ function LinkRow({
       onPress={() => {
         // A browser that refuses to open is worth a word. Swallowing it leaves
         // the reader pressing a row that silently does nothing.
-        void openExternal(url).catch((caught: unknown) =>
+        void openExternalUrl(url).catch((caught: unknown) =>
           toast.error(caught instanceof Error ? caught.message : String(caught)),
         );
       }}

@@ -6,7 +6,6 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Animated, Easing, Pressable, ScrollView, Text, View } from "react-native";
 import { dispatchPlans } from "./dispatch";
 import { useBoardSettings } from "./settings";
-import { vocabularyOf } from "../shared/settings";
 import {
   AppearanceContext,
   buildAppearance,
@@ -257,12 +256,12 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
   const [showSkipped, setShowSkipped] = useState(false);
 
   const board = useQuery({
-    // The vocabulary is part of the question, so editing it in settings draws a
-    // different board instead of serving the previous one from the cache.
+    // The daemon reads the vocabulary from the same settings document. Keying
+    // on it here still matters: editing it in settings draws a new board
+    // instead of serving the previous one from the cache.
     queryKey: ["ticket-board", "board", repoDir, readyLabel, deferredLabel],
     enabled: typeof repoDir === "string" && repoDir.length > 0,
-    queryFn: () =>
-      read({ repoDir: repoDir as string, vocabulary: { readyLabel, deferredLabel } }),
+    queryFn: () => read({ repoDir: repoDir as string }),
     // Reopening the panel should redraw the last board, not spin. Refresh is a
     // button, and a dispatch invalidates the key anyway.
     staleTime: 30_000,
@@ -308,7 +307,6 @@ export function Board({ theme, layout, navigation, repoDir, header }: BoardProps
         repoDir: repoDir as string,
         numbers: [...dispatchable],
         force,
-        vocabulary: vocabularyOf(settings),
       });
       if (planned.error !== null) throw new Error(planned.error);
 

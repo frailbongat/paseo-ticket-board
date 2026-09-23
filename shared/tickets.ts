@@ -1,6 +1,5 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
-import { LabelVocabularySchema } from "./settings";
 
 /**
  * Contracts and constants shared by the panel and the daemon handler.
@@ -375,11 +374,6 @@ export const listTickets = defineRpc({
   input: z.object({
     /** Any path inside the repo. The server resolves the main checkout itself. */
     repoDir: z.string(),
-    /**
-     * The host's ready and deferred labels. Optional because the daemon cannot
-     * read plugin settings itself: a caller that omits it gets the defaults.
-     */
-    vocabulary: LabelVocabularySchema.optional(),
   }),
   output: TicketBoardSchema,
 });
@@ -424,8 +418,6 @@ export const planDispatch = defineRpc({
     numbers: z.array(z.number()),
     /** Allow tickets that are running or claimed, on a `-2`/`-3` branch. */
     force: z.boolean(),
-    /** Same document as `listTickets`, for the planner's own board build. */
-    vocabulary: LabelVocabularySchema.optional(),
   }),
   output: z.object({
     plans: z.array(DispatchPlanSchema),

@@ -7,7 +7,12 @@ import {
   planDispatchHandler,
   workspaceArchivedHook,
 } from "./server/tickets";
-import { boardSettings } from "./shared/settings";
+import {
+  DEFAULT_VOCABULARY,
+  type LabelVocabulary,
+  boardSettings,
+  vocabularyOf,
+} from "./shared/settings";
 import {
   appendTicketCard,
   claimDispatch,
@@ -16,13 +21,25 @@ import {
 } from "./shared/tickets";
 
 export default function contribute(server: PluginServerContext) {
-  // Host-side persistence for the settings screen. The handlers below never read
-  // this document: the daemon has no read side, so the client sends its labels
-  // along with the request.
-  server.registerSettings(boardSettings);
+  // The same host document the settings screen writes. Read per request, so a
+  // label edit applies to the next list without a plugin reload.
+  const settings = server.registerSettings(boardSettings);
 
-  server.handle(listTickets, listTicketsHandler);
-  server.handle(planDispatch, planDispatchHandler);
+  async function vocabulary(): Promise<LabelVocabulary> {
+    const state = await settings.read();
+    if (state.status === "ready") return vocabularyOf(state.values);
+    // The client draws with the defaults on an unreadable document too, so the
+    // two sides still agree on which tickets are listed.
+    console.error(`[tickets] board settings unreadable, using defaults: ${state.error}`);
+    return DEFAULT_VOCABULARY;
+  }
+
+  server.handle(listTickets, async (input, context) =>
+    listTicketsHandler(input, context, await vocabulary()),
+  );
+  server.handle(planDispatch, async (input, context) =>
+    planDispatchHandler(input, context, await vocabulary()),
+  );
   server.handle(claimDispatch, claimDispatchHandler);
   // Only a plugin session may write a timeline row, so the card is appended
   // here rather than by the client that just created the agent.

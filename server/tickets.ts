@@ -7,10 +7,7 @@ import type {
   PluginHookContext,
   PluginLifecycleEvents,
 } from "@getpaseo/plugin/server";
-import {
-  DEFAULT_VOCABULARY,
-  type LabelVocabulary,
-} from "../shared/settings";
+import type { LabelVocabulary } from "../shared/settings";
 import {
   AGENT_TICKET_LABEL,
   type DispatchPlan,
@@ -759,11 +756,11 @@ function toMessage(error: unknown): string {
 }
 
 export async function listTicketsHandler(
-  input: { repoDir: string; vocabulary?: LabelVocabulary },
+  input: { repoDir: string },
   context: PluginHandlerContext,
+  vocabulary: LabelVocabulary,
 ): Promise<TicketBoard> {
   const started = Date.now();
-  const vocabulary = input.vocabulary ?? DEFAULT_VOCABULARY;
   try {
     const board = await buildBoard(input.repoDir, context.paseo, vocabulary);
     cacheBoard(board, vocabulary);
@@ -822,12 +819,11 @@ export async function planDispatchHandler(
     repoDir: string;
     numbers: number[];
     force: boolean;
-    vocabulary?: LabelVocabulary;
   },
   context: PluginHandlerContext,
+  vocabulary: LabelVocabulary,
 ): Promise<{ plans: DispatchPlan[]; error: string | null }> {
   const started = Date.now();
-  const vocabulary = input.vocabulary ?? DEFAULT_VOCABULARY;
   try {
     const root = await resolveRepoRoot(input.repoDir);
 

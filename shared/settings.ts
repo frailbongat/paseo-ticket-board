@@ -9,9 +9,9 @@ import { z } from "zod";
  * below are those constants verbatim, so a fresh install behaves exactly as the
  * hardcoded board did and only a deliberate edit changes it.
  *
- * The daemon has no read side for plugin settings, so the label vocabulary
- * travels to the server as RPC input. `LabelVocabularySchema` is that wire
- * shape, and `vocabularyOf` is the only thing allowed to build it.
+ * The daemon reads the label vocabulary from this same document, through the
+ * handle `registerSettings` returns. `vocabularyOf` is the only thing allowed
+ * to cut that half out of it.
  */
 
 /**
@@ -125,17 +125,15 @@ export const boardSettings = defineSettings({
   schema: BoardSettingsSchema,
 });
 
-// --- label vocabulary on the wire ---------------------------------------------
+// --- label vocabulary ---------------------------------------------------------
 
 /** The half of the settings the daemon needs to pick tickets. */
-export const LabelVocabularySchema = z.object({
-  readyLabel: z.string().min(1).default(DEFAULT_READY_LABEL),
-  deferredLabel: z.string().min(1).default(DEFAULT_DEFERRED_LABEL),
-});
+export interface LabelVocabulary {
+  readonly readyLabel: string;
+  readonly deferredLabel: string;
+}
 
-export type LabelVocabulary = z.infer<typeof LabelVocabularySchema>;
-
-/** Used when a caller omits the vocabulary, so an old client still lists. */
+/** Used when the host document is unreadable, matching what the client draws with. */
 export const DEFAULT_VOCABULARY: LabelVocabulary = {
   readyLabel: DEFAULT_READY_LABEL,
   deferredLabel: DEFAULT_DEFERRED_LABEL,

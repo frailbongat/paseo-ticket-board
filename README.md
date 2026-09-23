@@ -183,7 +183,7 @@ shortcut alone.
 | -------------------------- | ------- | ------------------------------------------------------------------ |
 | `index.client.tsx`         | client  | Surface, sidebar item, panel, and Command Center wiring            |
 | `index.server.ts`          | daemon  | RPC handler and lifecycle hook wiring                              |
-| `shared/settings.ts`       | both    | Settings document, its defaults, the label vocabulary sent to the daemon, and the appearance choices that stay client-side |
+| `shared/settings.ts`       | both    | Settings document, its defaults, the label vocabulary the daemon reads, and the appearance choices that stay client-side |
 | `shared/tickets.ts`        | both    | Zod RPC contracts, fixed labels, the two kinds, kind detection, prompts, the claim marker, the card contract |
 | `server/tickets.ts`        | daemon  | Every `gh` and `git` call, the ready rules, the claim and its release, the board cache |
 | `client/board.tsx`         | client  | The board: list, kind filter, multi-select, force, refresh, dispatch |
@@ -191,7 +191,6 @@ shortcut alone.
 | `client/board-surface.tsx` | client  | Sidebar wrapper, repo from the host's git projects                  |
 | `client/dispatch.ts`       | client  | Workspace and agent creation through the Paseo SDK                  |
 | `client/ticket-card.tsx`   | client  | The card pinned to a dispatched agent's timeline                    |
-| `client/web.ts`            | client  | The one module allowed a browser global, for opening a link         |
 | `client/settings.ts`       | client  | Reads the settings document, falling back to the defaults, and builds the live appearance tokens |
 | `client/providers.ts`      | client  | Provider, model, and thinking dropdown options from the daemon      |
 | `client/settings-screen.tsx` | client | The settings screen: one draft, saved as a whole document          |
@@ -249,10 +248,10 @@ model keeps the thinking level when it exists there. A saved id the catalog no l
 as a logged-out provider's, stays selectable and is marked "not available", and a provider that
 lists nothing falls back to a text field so a typed id still works.
 
-The daemon has no read side for plugin settings, so the client sends the two labels along with
-`ticket-board.tickets.list` and `ticket-board.dispatch.plan`. Both fields are optional: a caller
-that omits them gets the defaults. The board's query key carries them too, so editing a label
-draws a new board instead of serving the old one from cache.
+The daemon reads the two labels itself, through the handle `server.registerSettings()` returns, on
+every `ticket-board.tickets.list` and `ticket-board.dispatch.plan`. An unreadable document falls
+back to the defaults, the same as the client. The board's query key still carries the labels, so
+editing one draws a new board instead of serving the old one from cache.
 
 Every dispatched agent carries the labels `ticket: <number>` and `kind: <skill-name>`.
 
